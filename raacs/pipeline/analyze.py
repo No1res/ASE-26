@@ -13,6 +13,7 @@ from raacs.core.ast import CodeRoleClassifier, SymbolCollector, ProjectSymbolTab
 from raacs.core.graph import DependencyGraphAnalyzer
 from raacs.core.fusion import IntegratedRoleAnalyzer, IntegratedRoleResult
 
+
 def run_analysis(project_root: str, debug: bool = False) -> List[IntegratedRoleResult]:
     """
     执行完整的 RAACS 分析流程：
