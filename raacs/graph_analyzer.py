@@ -327,6 +327,77 @@ class DependencyGraphAnalyzer:
     使用动态阈值系统，根据仓库统计分布自动计算判定阈值。
     """
     
+    @staticmethod
+    def build_from_symbol_table(symbol_table) -> Dict:
+        """
+        Build dependency graph directly from AST symbol table (Replacing pydeps).
+        
+        Args:
+            symbol_table: ProjectSymbolTable from ast_analyzer
+            
+        Returns:
+            dep_map dictionary compatible with DependencyGraphAnalyzer
+        """
+        dep_map = {}
+        
+        # 1. Build module_path -> file_path lookup
+        mod_to_file = {}
+        for file_path, file_symbols in symbol_table.files.items():
+            if file_symbols.module_path:
+                mod_to_file[file_symbols.module_path] = file_path
+        
+        # 2. Initialize nodes
+        for mod_name, file_path in mod_to_file.items():
+            dep_map[mod_name] = {
+                "path": file_path,
+                "imports": [],
+                "imported_by": [],
+                "bacon": 0
+            }
+            
+        # 3. Resolve edges (Imports)
+        for file_path, file_symbols in symbol_table.files.items():
+            source_mod = file_symbols.module_path
+            if not source_mod or source_mod not in dep_map:
+                continue
+            
+            seen_imports = set()
+            
+            # Iterate through imports collected by AST
+            for import_info in file_symbols.imports.values():
+                target = import_info.source_module
+                if not target:
+                    continue
+                
+                resolved_target = None
+                
+                # Case A: Exact match
+                if target in mod_to_file:
+                    resolved_target = target
+                # Case B: Parent package match (e.g., from raacs.utils import x -> depends on raacs.utils)
+                else:
+                    parts = target.split('.')
+                    for i in range(len(parts), 0, -1):
+                        sub_mod = '.'.join(parts[:i])
+                        if sub_mod in mod_to_file:
+                            resolved_target = sub_mod
+                            break
+                
+                # Add edge
+                if resolved_target and resolved_target != source_mod:
+                    if resolved_target not in seen_imports:
+                        dep_map[source_mod]["imports"].append(resolved_target)
+                        seen_imports.add(resolved_target)
+
+        # 4. Calculate reverse edges (imported_by)
+        for source, data in dep_map.items():
+            for target in data["imports"]:
+                if target in dep_map:
+                    if source not in dep_map[target]["imported_by"]:
+                        dep_map[target]["imported_by"].append(source)
+                        
+        return dep_map
+    
     def __init__(self, dep_map: Dict, project_root: str = None, debug: bool = False):
         """
         Args:

@@ -39,8 +39,6 @@ import os
 import sys
 import json
 import argparse
-import subprocess
-import tempfile
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
@@ -56,96 +54,6 @@ from raacs import (
     DependencyGraphAnalyzer, GraphRole, ArchitecturalLayer,
     GraphRoleResult,
 )
-
-
-# ============================================================================
-# 依赖图生成器
-# ============================================================================
-
-class DependencyGraphGenerator:
-    """依赖图生成器 - 内置 pydeps 调用"""
-    
-    @staticmethod
-    def generate(project_root: str, output_path: Optional[str] = None,
-                 debug: bool = False) -> Optional[Dict]:
-        """
-        使用 pydeps 生成依赖图
-        
-        Args:
-            project_root: 项目根目录
-            output_path: 输出 JSON 路径（可选）
-            debug: 调试模式
-            
-        Returns:
-            依赖图字典，失败返回 None
-        """
-        project_root = os.path.abspath(project_root)
-        project_name = os.path.basename(project_root)
-        
-        # 检查 pydeps 是否可用
-        try:
-            result = subprocess.run(
-                ['pydeps', '--version'],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                if debug:
-                    print("[Warning] pydeps not available, skipping graph analysis")
-                return None
-        except FileNotFoundError:
-            if debug:
-                print("[Warning] pydeps not installed, skipping graph analysis")
-                print("[Hint] Install with: pip install pydeps")
-            return None
-        
-        try:
-            if debug:
-                print(f"[DependencyGraph] Generating dependency map for {project_root}...")
-            
-            # 调用 pydeps - JSON 输出到 stdout
-            cmd = [
-                'pydeps',
-                project_name,  # 使用项目名而非完整路径
-                '--show-deps',
-                '--no-show',
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=os.path.dirname(project_root)  # 在父目录执行
-            )
-            
-            # pydeps 即使成功也可能返回非零退出码，检查输出
-            if not result.stdout or not result.stdout.strip().startswith('{'):
-                if debug:
-                    print(f"[Warning] pydeps failed: {result.stderr}")
-                return None
-            
-            # 解析 JSON 输出
-            dep_map = json.loads(result.stdout)
-            
-            if debug:
-                print(f"[DependencyGraph] Generated dependency map with {len(dep_map)} modules")
-            
-            # 如果指定了输出路径，保存到文件
-            if output_path:
-                with open(output_path, 'w') as f:
-                    json.dump(dep_map, f, indent=4)
-                if debug:
-                    print(f"[DependencyGraph] Saved to {output_path}")
-            
-            return dep_map
-            
-        except json.JSONDecodeError as e:
-            if debug:
-                print(f"[Warning] Failed to parse pydeps output: {e}")
-            return None
-        except Exception as e:
-            if debug:
-                print(f"[Warning] Failed to generate dependency graph: {e}")
-            return None
 
 
 @dataclass
@@ -220,17 +128,15 @@ class IntegratedRoleAnalyzer:
     }
     
     def __init__(self, project_root: str, dep_map_path: Optional[str] = None, 
-                 auto_generate_deps: bool = True, debug: bool = False):
+                 debug: bool = False):
         """
         Args:
             project_root: 项目根目录
             dep_map_path: 预生成的依赖图 JSON 路径（可选）
-            auto_generate_deps: 如果没有提供 dep_map_path，是否自动生成依赖图
             debug: 调试模式
         """
         self.project_root = os.path.abspath(project_root)
         self.debug = debug
-        self.auto_generate_deps = auto_generate_deps
         
         # AST 分析器（带符号表）
         self.ast_classifier: Optional[CodeRoleClassifier] = None
@@ -276,21 +182,18 @@ class IntegratedRoleAnalyzer:
         # 4. 图结构分析器
         dep_map = None
         
-        # 优先使用提供的依赖图
+        # 优先使用提供的依赖图 JSON 文件
         if dep_map_path and os.path.exists(dep_map_path):
             if self.debug:
                 print(f"[Init] Loading dependency graph from {dep_map_path}")
             with open(dep_map_path) as f:
                 dep_map = json.load(f)
         
-        # 如果没有提供且允许自动生成
-        elif self.auto_generate_deps:
+        # 否则从符号表原生构建（无需 pydeps）
+        elif self.symbol_table:
             if self.debug:
-                print("[Init] Auto-generating dependency graph...")
-            dep_map = DependencyGraphGenerator.generate(
-                self.project_root, 
-                debug=self.debug
-            )
+                print("[Init] Building dependency graph from symbol table (native)...")
+            dep_map = DependencyGraphAnalyzer.build_from_symbol_table(self.symbol_table)
         
         if dep_map:
             self.graph_analyzer = DependencyGraphAnalyzer(dep_map, self.project_root, debug=self.debug)
@@ -486,9 +389,7 @@ if __name__ == "__main__":
         description=f"RAACS Role Classifier v{__version__} - Three-Layer Fusion Analyzer"
     )
     parser.add_argument("project_root", help="Project root directory")
-    parser.add_argument("--dep-map", help="Path to pre-generated pydeps JSON (optional)")
-    parser.add_argument("--no-auto-deps", action="store_true", 
-                        help="Disable auto-generation of dependency graph")
+    parser.add_argument("--dep-map", help="Path to pre-generated dependency JSON (optional)")
     parser.add_argument("--save-deps", help="Save generated dependency graph to file")
     parser.add_argument("--file", help="Analyze specific file")
     parser.add_argument("--debug", action="store_true")
@@ -497,22 +398,22 @@ if __name__ == "__main__":
     parser.add_argument("--version", action="version", version=f"v{__version__}")
     args = parser.parse_args()
     
-    # 如果需要保存依赖图
+    # 如果需要保存依赖图，先构建符号表并保存
     dep_map_path = args.dep_map
     if args.save_deps and not dep_map_path:
-        dep_map = DependencyGraphGenerator.generate(
-            args.project_root, 
-            output_path=args.save_deps,
-            debug=args.debug
-        )
-        if dep_map:
-            print(f"[Saved] Dependency graph saved to {args.save_deps}")
-            dep_map_path = args.save_deps
+        if args.debug:
+            print("[Init] Building symbol table for dependency export...")
+        collector = SymbolCollector(os.path.abspath(args.project_root))
+        temp_symbol_table = collector.collect()
+        dep_map = DependencyGraphAnalyzer.build_from_symbol_table(temp_symbol_table)
+        with open(args.save_deps, 'w') as f:
+            json.dump(dep_map, f, indent=4)
+        print(f"[Saved] Dependency graph saved to {args.save_deps}")
+        dep_map_path = args.save_deps
     
     analyzer = IntegratedRoleAnalyzer(
         args.project_root,
         dep_map_path=dep_map_path,
-        auto_generate_deps=not args.no_auto_deps,
         debug=args.debug
     )
     
