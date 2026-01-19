@@ -1,38 +1,3 @@
-"""
-RAACS Role Classifier v9: 三层融合角色分析器
-
-版本: v9.2
-日期: 2025-12-04
-
-融合三层信号：
-1. AST 层：文件内部结构（做什么）
-2. 符号表层：跨文件继承（是什么的子类）
-3. 图结构层：依赖网络位置（在哪里）
-
-最终产出：架构角色 + 置信度 + 推理链
-
-v9.2 新增（ast_analyzer v8.1）：
-- RoleSource: 角色来源追踪
-- 分离索引结构（FQN vs Simple Name）
-- 弱信号覆盖逻辑
-- BaseInfo 结构化基类信息
-
-目录结构:
-    role_classifier_v9.py    # 主入口
-    raacs/                   # 核心库
-        __init__.py          # 统一导出
-        ast_analyzer.py      # AST + 符号表分析 (v8.1)
-        graph_analyzer.py    # 图结构 + 动态阈值
-    deprecated/              # 废弃代码
-    docs/                    # 文档
-
-使用方式:
-    python role_classifier_v9.py <project_root> [options]
-    
-    # 或作为库使用
-    from raacs import CodeRoleClassifier, DependencyGraphAnalyzer, RoleSource
-"""
-
 __version__ = "9.2"
 
 import os

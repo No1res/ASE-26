@@ -1,21 +1,3 @@
-"""
-RAACS 5.0: Role-Aware Adaptive Context System - Code Role Classifier v8.1
-
-核心改进：两阶段分析 + 跨文件符号表 + 增强继承传播
-
-v8.1 改进：
-1. 分离全局索引（FQN vs Simple Name），避免命名冲突
-2. 结构化基类信息（BaseInfo），支持多候选 FQN 解析
-3. 角色来源追踪（RoleSource），区分信号强度
-4. 弱信号覆盖逻辑，允许强继承信号覆盖弱初始角色
-5. 多基类角色收集与融合
-
-解决的问题：
-- 跨文件继承链的角色传递
-- import pkg as alias; class A(alias.Base) 的解析
-- 弱信号（名称 hint）被强信号（继承）覆盖
-"""
-
 import ast
 import os
 import argparse
