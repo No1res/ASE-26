@@ -20,6 +20,9 @@ from .core.graph import GraphRole, ArchitecturalLayer, GraphRoleResult, Dependen
 # 融合层
 from .core.fusion import IntegratedRoleAnalyzer, IntegratedRoleResult, DependencyGraphGenerator
 
+# 静态 Import 扫描器（无需运行时环境）
+from .adapters.import_scanner import StaticImportScanner, scan_imports
+
 # PPR 扩散（延迟导入，需要 networkx）
 # 使用 from raacs.core.diffusion import run_ppr, CodeGraphBuilder, GraphVisualizer
 
@@ -47,4 +50,7 @@ __all__ = [
     "IntegratedRoleAnalyzer",
     "IntegratedRoleResult",
     "DependencyGraphGenerator",
+    # 静态扫描器
+    "StaticImportScanner",
+    "scan_imports",
 ]

@@ -5,12 +5,11 @@
 提供：
 - IntegratedRoleResult: 集成角色分析结果数据类
 - IntegratedRoleAnalyzer: 集成角色分析器
-- DependencyGraphGenerator: 依赖图生成器
+- DependencyGraphGenerator: 依赖图生成器（纯静态分析，无需运行时环境）
 """
 
 import os
 import json
-import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -25,43 +24,27 @@ from .graph import (
     GraphRoleResult,
 )
 
+# 静态 import 扫描器
+from raacs.adapters.import_scanner import StaticImportScanner, scan_imports
+
 
 # ============================================================================
-# 依赖图生成器
+# 依赖图生成器（纯静态分析）
 # ============================================================================
 
 class DependencyGraphGenerator:
-    """依赖图生成器 - 内置 pydeps 调用"""
+    """
+    依赖图生成器 - 纯静态分析
 
-    @staticmethod
-    def _find_python_packages(project_root: str) -> List[str]:
-        """
-        查找项目中的 Python 包（包含 __init__.py 的目录）
-
-        Returns:
-            包名列表（相对于 project_root）
-        """
-        packages = []
-        for item in os.listdir(project_root):
-            item_path = os.path.join(project_root, item)
-            if os.path.isdir(item_path):
-                init_file = os.path.join(item_path, '__init__.py')
-                if os.path.exists(init_file):
-                    # 检查是否是有效的 Python 包名（不含 - 等非法字符）
-                    if item.isidentifier():
-                        packages.append(item)
-        return packages
-
-    @staticmethod
-    def _is_valid_module_name(name: str) -> bool:
-        """检查是否是有效的 Python 模块名"""
-        return name.isidentifier()
+    使用基于 AST 的 import 扫描，不需要安装被分析项目的依赖，
+    不需要运行时环境，适用于 CI/CD 和大规模代码扫描场景。
+    """
 
     @staticmethod
     def generate(project_root: str, output_path: Optional[str] = None,
                  debug: bool = False) -> Optional[Dict]:
         """
-        使用 pydeps 生成依赖图
+        生成依赖图（纯静态分析）
 
         Args:
             project_root: 项目根目录
@@ -69,94 +52,26 @@ class DependencyGraphGenerator:
             debug: 调试模式
 
         Returns:
-            依赖图字典，失败返回 None
+            依赖图字典，格式:
+            {
+                "module.name": {
+                    "path": "/path/to/file.py",
+                    "imports": ["other.module", ...],
+                    "imported_by": ["caller.module", ...]
+                },
+                ...
+            }
         """
         project_root = os.path.abspath(project_root)
-        project_name = os.path.basename(project_root)
 
-        # 检查 pydeps 是否可用
-        try:
-            result = subprocess.run(
-                ['pydeps', '--version'],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                if debug:
-                    print("[Warning] pydeps not available, skipping graph analysis")
-                return None
-        except FileNotFoundError:
-            if debug:
-                print("[Warning] pydeps not installed, skipping graph analysis")
-                print("[Hint] Install with: pip install pydeps")
-            return None
-
-        # 确定要分析的目标
-        # 如果项目目录名不是有效的 Python 模块名，尝试查找内部的包
-        if not DependencyGraphGenerator._is_valid_module_name(project_name):
-            if debug:
-                print(f"[DependencyGraph] Project name '{project_name}' is not a valid Python module name")
-
-            # 查找项目内的 Python 包
-            packages = DependencyGraphGenerator._find_python_packages(project_root)
-            if debug:
-                print(f"[DependencyGraph] Found Python packages: {packages}")
-
-            if not packages:
-                if debug:
-                    print("[Warning] No valid Python packages found in project")
-                return None
-
-            # 使用找到的包，在项目目录内执行 pydeps
-            target_package = packages[0]  # 使用第一个找到的包
-            working_dir = project_root
-            if debug:
-                print(f"[DependencyGraph] Using package '{target_package}' as target")
-        else:
-            target_package = project_name
-            working_dir = os.path.dirname(project_root)
+        if debug:
+            print(f"[DependencyGraph] Using static import scanner (no runtime dependency)")
+            print(f"[DependencyGraph] Project root: {project_root}")
 
         try:
-            if debug:
-                print(f"[DependencyGraph] Generating dependency map...")
-                print(f"[DependencyGraph] Target package: {target_package}")
-                print(f"[DependencyGraph] Working directory: {working_dir}")
-
-            # 调用 pydeps - JSON 输出到 stdout
-            cmd = [
-                'pydeps',
-                target_package,
-                '--show-deps',
-                '--no-show',
-            ]
-
-            if debug:
-                print(f"[DependencyGraph] Command: {' '.join(cmd)}")
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=working_dir
-            )
-
-            if debug:
-                print(f"[DependencyGraph] Return code: {result.returncode}")
-                print(f"[DependencyGraph] Stdout length: {len(result.stdout) if result.stdout else 0}")
-                if result.stderr:
-                    # 只显示前几行错误，避免刷屏
-                    stderr_lines = result.stderr.strip().split('\n')
-                    print(f"[DependencyGraph] Stderr ({len(stderr_lines)} lines): {stderr_lines[0] if stderr_lines else '(empty)'}")
-                if result.stdout:
-                    print(f"[DependencyGraph] Stdout preview: {result.stdout[:200]}...")
-
-            # pydeps 即使成功也可能返回非零退出码，检查输出
-            if not result.stdout or not result.stdout.strip().startswith('{'):
-                if debug:
-                    print(f"[Warning] pydeps output is not valid JSON")
-                return None
-
-            # 解析 JSON 输出
-            dep_map = json.loads(result.stdout)
+            # 使用静态扫描器
+            scanner = StaticImportScanner(project_root, debug=debug)
+            dep_map = scanner.scan()
 
             if debug:
                 print(f"[DependencyGraph] Generated dependency map with {len(dep_map)} modules")
@@ -164,22 +79,24 @@ class DependencyGraphGenerator:
                     sample_keys = list(dep_map.keys())[:5]
                     print(f"[DependencyGraph] Sample modules: {sample_keys}")
 
+                    # 统计依赖信息
+                    total_imports = sum(len(m.get('imports', [])) for m in dep_map.values())
+                    print(f"[DependencyGraph] Total internal dependencies: {total_imports}")
+
             # 如果指定了输出路径，保存到文件
             if output_path:
-                with open(output_path, 'w') as f:
-                    json.dump(dep_map, f, indent=4)
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    json.dump(dep_map, f, indent=2, ensure_ascii=False)
                 if debug:
                     print(f"[DependencyGraph] Saved to {output_path}")
 
-            return dep_map
+            return dep_map if dep_map else None
 
-        except json.JSONDecodeError as e:
-            if debug:
-                print(f"[Warning] Failed to parse pydeps output: {e}")
-            return None
         except Exception as e:
             if debug:
                 print(f"[Warning] Failed to generate dependency graph: {e}")
+                import traceback
+                traceback.print_exc()
             return None
 
 
