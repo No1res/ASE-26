@@ -1,35 +1,30 @@
+"""
+RAACS 5.0: Role-Aware Adaptive Context System - Code Role Classifier v8.1
+
+核心改进：两阶段分析 + 跨文件符号表 + 增强继承传播
+
+v8.1 改进：
+1. 分离全局索引（FQN vs Simple Name），避免命名冲突
+2. 结构化基类信息（BaseInfo），支持多候选 FQN 解析
+3. 角色来源追踪（RoleSource），区分信号强度
+4. 弱信号覆盖逻辑，允许强继承信号覆盖弱初始角色
+5. 多基类角色收集与融合
+
+解决的问题：
+- 跨文件继承链的角色传递
+- import pkg as alias; class A(alias.Base) 的解析
+- 弱信号（名称 hint）被强信号（继承）覆盖
+"""
+
 import ast
 import os
 import argparse
-import warnings
 from collections import defaultdict
 from typing import Set, List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import re
-
-
-def safe_parse_source(source: str, filename: str = "<unknown>") -> Optional[ast.AST]:
-    """
-    安全地解析 Python 源代码，抑制 SyntaxWarning。
-    
-    被分析的代码可能包含无效的转义序列（如 JSON 中的 \\/ ），
-    这些在 Python 中会产生 SyntaxWarning，但不影响 AST 解析。
-    
-    Args:
-        source: Python 源代码字符串
-        filename: 文件名（用于错误信息）
-        
-    Returns:
-        AST 树，解析失败返回 None
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=SyntaxWarning)
-        try:
-            return ast.parse(source, filename=filename)
-        except SyntaxError:
-            return None
 
 
 class Role(Enum):
@@ -457,10 +452,8 @@ class SymbolCollector:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 source = f.read()
-            tree = safe_parse_source(source, filename=file_path)
-            if tree is None:
-                return
-        except UnicodeDecodeError:
+            tree = ast.parse(source)
+        except (SyntaxError, UnicodeDecodeError):
             return
         
         file_symbols = FileSymbols(
@@ -995,8 +988,9 @@ class CodeRoleClassifier:
     
     def analyze_source(self, source_code: str, file_path: str = "") -> FileAnalysis:
         """核心分析流水线"""
-        tree = safe_parse_source(source_code, filename=file_path or "<string>")
-        if tree is None:
+        try:
+            tree = ast.parse(source_code)
+        except SyntaxError:
             return self._empty_result(file_path, "Syntax error")
         
         filename = os.path.basename(file_path).lower() if file_path else ""

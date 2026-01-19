@@ -1,145 +1,351 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# RAACS: Role-Adaptive Architecture Classification System
 
 ## Project Overview
 
-**RAACS** (Role-Aware Automated Code System) is a Python-based static analysis tool that classifies code files into semantic roles. It analyzes Python repositories to determine the architectural purpose of each file (e.g., TEST, SCHEMA, ADAPTER, LOGIC) using a multi-signal fusion approach combining AST analysis, dependency graph analysis, and role propagation.
+RAACS (Role-Adaptive Architecture Classification System) is a three-layer code role classification tool that analyzes Python codebases to identify architectural roles of files and entities. It combines AST analysis, symbol table propagation, and dependency graph analysis to classify code into architectural roles with confidence scores.
 
-### Core Concepts
+**Current Version**: v9.2
+**Status**: Active development
+**Language**: Python 3.8+
 
-- **Roles**: 9 semantic categories (TEST, NAMESPACE, INTERFACE, SCHEMA, ADAPTER, CONFIG, SCRIPT, UTIL, LOGIC, UNKNOWN) that correspond to different "Morphing" strategies
-- **Three-layer Signal Fusion**: Combines AST-based classification, graph structure analysis, and role propagation to determine final roles
-- **Role Source Tracking**: Tracks how each role was determined (framework detection, decorator, name patterns, inheritance, propagation, etc.)
+## What This Project Does
 
-## Project Structure
+RAACS analyzes Python projects to automatically classify each file and entity into architectural roles:
+
+- **TEST**: Unit tests, integration tests, mock data
+- **NAMESPACE**: Package init files (imports only)
+- **INTERFACE**: Abstract base classes, protocols
+- **SCHEMA**: Data models, DTOs, ORM entities
+- **ADAPTER**: API routes, views, controllers, I/O boundaries
+- **CONFIG**: Environment variables, constants, settings
+- **SCRIPT**: CLI tools, entry points, standalone scripts
+- **UTIL**: Stateless helper functions, utilities
+- **LOGIC**: Core business logic (default/fallback role)
+
+### Three-Layer Analysis Architecture
 
 ```
-raacs/                    # Main package
-├── __init__.py          # Package exports (Role, CodeRoleClassifier, etc.)
-├── ast_analyzer.py      # AST analysis implementation
-├── graph_analyzer.py    # Graph analysis implementation
-├── core/                # Core analysis components
-│   ├── roles.py         # Role enum, source tracking, compatibility matrix
-│   ├── ast.py           # Re-exports from ast_analyzer.py
-│   ├── graph.py         # Re-exports from graph_analyzer.py
-│   ├── fusion.py        # Multi-signal fusion logic (IntegratedRoleAnalyzer)
-│   └── diffusion.py     # PPR implementation (CodeGraphBuilder, GraphVisualizer)
-├── adapters/            # External tool integrations
-│   ├── import_scanner.py # Static import scanner (pure AST, no runtime deps)
-│   └── viz.py           # Role-aware HTML visualization
-├── pipeline/            # Analysis orchestration
-│   └── analyze.py       # Main analysis pipeline
-└── utils/               # Utility functions
+Layer 1: AST Layer
+├─ What: Internal file structure analysis
+├─ How: Framework fingerprints + structural patterns + path hints
+└─ Answers: "What does this file DO?"
 
-cli/                     # Command-line interface
-├── raacs_analyze.py     # Main analysis CLI
-└── raacs_context.py     # Context generation CLI
+Layer 2: Symbol Table Layer
+├─ What: Cross-file inheritance relationships
+├─ How: Role propagation through class hierarchies
+└─ Answers: "What is this file a subclass OF?"
 
-main.py                  # Entry point
+Layer 3: Graph Layer (NEW in v9)
+├─ What: Dependency network analysis
+├─ How: pydeps-based graph topology + dynamic thresholds
+├─ GraphRoles: HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE
+└─ Answers: "WHERE is this file in the architecture?"
+
+Fusion: Weighted Role Fusion
+├─ What: Combines all three layers with fusion rules
+└─ Output: Final architectural role + confidence + reasoning
 ```
 
-## Common Commands
+## Core Components
 
-### Running Analysis
+### Main Entry Point
+- `role_classifier_v9.py` - Primary CLI and integration analyzer
 
-```bash
-# Analyze a repository (outputs JSON)
-python -m cli.raacs_analyze /path/to/repo --out results.json
-
-# With debug output
-python -m cli.raacs_analyze /path/to/repo --out results.json --debug
-
-# Analyze and generate HTML visualization
-python -m cli.raacs_analyze /path/to/repo --viz graph.html
-
-# Generate only dependency graph visualization (skip full analysis)
-python -m cli.raacs_analyze /path/to/repo --viz-only deps.html
-
-# Visualization with filtering (reduce node count for large repos)
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --max-nodes 50
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --min-degree 2
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --exclude-roles TEST,NAMESPACE
-
-# Visualization layout options
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --layout hierarchical  # 层次布局(默认)
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --layout physics       # 力导向布局
-python -m cli.raacs_analyze /path/to/repo --viz graph.html --layout role          # 按角色分组
-```
-
-### Development
-
-```bash
-# Create/activate virtual environment (using uv)
-uv venv
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install -e .
-
-# Run the main entry point
-python main.py
-```
-
-## Architecture Notes
-
-### Analysis Pipeline Flow
-
-1. **Dependency Extraction**: Uses pure AST-based static import scanner (no runtime environment required)
-2. **AST Analysis**: First pass - collects symbols, analyzes code structure
-3. **Role Propagation**: Second pass - propagates roles through inheritance/imports
-4. **Graph Analysis**: Analyzes structural position in dependency graph
-5. **Signal Fusion**: Combines all signals with weighted confidence scores
+### RAACS Library (`raacs/`)
+- `ast_analyzer.py` (v8.1) - AST analysis + symbol table + role propagation
+- `graph_analyzer.py` - Dependency graph analysis with dynamic thresholds
+- `__init__.py` - Public API exports
 
 ### Key Classes
 
-- `Role`: Enum defining the 9 code roles
-- `RoleSource`: Tracks origin of role classification
-- `CodeRoleClassifier`: AST-based file analysis (in `raacs/ast_analyzer.py`)
-- `DependencyGraphAnalyzer`: Graph structure analysis (in `raacs/graph_analyzer.py`)
-- `IntegratedRoleAnalyzer`: Final fusion of all signals (in `raacs/core/fusion.py`)
-- `RolePropagator`: Propagates roles through symbol relationships
-- `StaticImportScanner`: Pure AST-based import scanner (in `raacs/adapters/import_scanner.py`)
-- `RoleGraphVisualizer`: Role-aware HTML visualization (in `raacs/adapters/viz.py`, requires pyvis)
-- `CodeGraphBuilder`: PPR graph builder (in `raacs/core/diffusion.py`, requires networkx)
-- `GraphVisualizer`: PPR visualization (in `raacs/core/diffusion.py`, requires pyvis)
+**AST Layer:**
+- `CodeRoleClassifier` - Main AST analyzer
+- `SymbolCollector` - Builds project-wide symbol table
+- `RolePropagator` - Propagates roles through inheritance
+- `ProjectSymbolTable` - Global class/function registry
+- `RoleSource` (v9.2) - Tracks where role assignments come from
 
-### Import Patterns
+**Graph Layer:**
+- `DependencyGraphAnalyzer` - Graph topology analyzer with dynamic thresholds
+- `DependencyGraphGenerator` - pydeps wrapper for auto-generation
+- `DynamicThresholds` - Repository-scale-aware threshold computation
+- `RepositoryStats` - In/out-degree distribution statistics
 
-```python
-# Core imports (no external dependencies beyond stdlib)
-from raacs import Role, RoleSource, CodeRoleClassifier, DependencyGraphAnalyzer
-from raacs import IntegratedRoleAnalyzer, IntegratedRoleResult
-from raacs import StaticImportScanner, scan_imports
+**Fusion:**
+- `IntegratedRoleAnalyzer` - Three-layer fusion orchestrator
+- `IntegratedRoleResult` - Final analysis result with all metadata
 
-# Visualization (requires pyvis)
-from raacs.adapters.viz import RoleGraphVisualizer, generate_role_viz
+### Enums
+- `Role` - 9 architectural roles
+- `GraphRole` - 6 graph topology roles (HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE)
+- `ArchitecturalLayer` - 3 layers (APPLICATION, INTERFACE, INFRASTRUCTURE)
 
-# PPR/Visualization (requires networkx, pyvis, matplotlib)
-from raacs.core.diffusion import run_ppr, CodeGraphBuilder, GraphVisualizer
+## How It Works
+
+### Recognition Strategy (Weighted Scoring)
+
+1. **Priority 1: Framework Fingerprints (Weight: 4.0)**
+   - Explicit imports: `pytest`, `unittest`, `flask`, `fastapi`, `pydantic`, `sqlalchemy`
+   - Decorators: `@fixture`, `@route`, `@dataclass`, `@api_view`
+   - Base classes: `TestCase`, `BaseModel`, `ABC`, `Protocol`
+
+2. **Priority 2: Structural Patterns (Weight: 2.5)**
+   - Assert density (TEST)
+   - Field-to-method ratio (SCHEMA)
+   - Abstraction rate (INTERFACE)
+   - I/O parameter patterns (ADAPTER)
+   - Complexity metrics (LOGIC vs UTIL)
+
+3. **Priority 3: Path Hints (Weight: 1.5)**
+   - Directory names: `tests/`, `utils/`, `models/`, `api/`
+   - File naming conventions: `test_*.py`, `config.py`, `__init__.py`
+
+4. **Fallback: LOGIC**
+   - Default for files with complex logic that don't match other patterns
+
+### Dynamic Thresholds (v9.1)
+
+RAACS adapts to repository size using statistical distribution:
+
+| Repo Size | Modules | HUB Percentile | ORCH Percentile | APP Layer Ratio |
+|-----------|---------|----------------|-----------------|-----------------|
+| tiny      | <30     | P80            | P80             | 0.50            |
+| small     | 30-100  | P85            | P85             | 0.55            |
+| medium    | 100-300 | P90            | P90             | 0.60            |
+| large     | 300-1000| P92            | P92             | 0.65            |
+| huge      | >1000   | P95            | P95             | 0.70            |
+
+### Fusion Rules
+
+Key examples of AST + Graph → Final role:
+- (LOGIC, HUB) → UTIL (high centrality suggests core utility)
+- (LOGIC, ORCHESTRATOR) → LOGIC (confirms business logic)
+- (LOGIC, SINK) → SCRIPT (entry point)
+- (LOGIC, LEAF) → UTIL (stateless utility)
+- (LOGIC, BRIDGE) → ADAPTER (adapter layer)
+
+## Usage
+
+### Command Line
+
+```bash
+# Basic analysis (auto-generates dependency graph)
+python role_classifier_v9.py /path/to/project
+
+# Analyze single file
+python role_classifier_v9.py /path/to/project --file path/to/file.py
+
+# Debug mode with full details
+python role_classifier_v9.py /path/to/project --debug --show-fusion --show-graph
+
+# Save dependency graph for reuse
+python role_classifier_v9.py /path/to/project --save-deps deps.json
+
+# Use pre-generated dependency graph
+python role_classifier_v9.py /path/to/project --dep-map deps.json
+
+# Disable auto-generation
+python role_classifier_v9.py /path/to/project --no-auto-deps
+
+# Version info
+python role_classifier_v9.py --version
 ```
 
-### Signal Weights (from `SignalWeight`)
+### As a Library
 
-- FRAMEWORK: 4.0 (highest - framework detection like pytest, pydantic)
-- INHERITANCE: 3.5 (base class relationships)
-- STRUCTURE: 2.5 (code structure patterns)
-- PATH_HINT: 1.5 (directory/file naming)
-- NAME_HINT: 1.0 (identifier naming patterns)
+```python
+from raacs import (
+    CodeRoleClassifier,
+    DependencyGraphAnalyzer,
+    Role,
+    GraphRole,
+    RoleSource
+)
 
-## Code Style
+# Integrated analysis
+from role_classifier_v9 import IntegratedRoleAnalyzer
 
-- Python 3.12+
-- Type hints throughout
-- Docstrings in Chinese (项目文档使用中文)
-- Uses dataclasses and enums extensively
-- Follows standard Python project layout
+analyzer = IntegratedRoleAnalyzer(
+    "/path/to/project",
+    auto_generate_deps=True,
+    debug=True
+)
+
+# Analyze entire project
+results = analyzer.analyze_project()
+
+# Analyze single file
+result = analyzer.analyze_file("/path/to/file.py")
+
+# Access results
+print(f"AST Role: {result.ast_role.value}")
+print(f"Graph Role: {result.graph_role.value}")
+print(f"Final Role: {result.final_role.value} (conf={result.final_confidence:.2f})")
+print(f"Reasoning: {result.fusion_reasoning}")
+```
+
+## Directory Structure
+
+```
+role_classifier_CLAUDE/
+├── role_classifier_v9.py       # Main entry point
+├── ppr.py                       # PageRank implementation (research)
+├── raacs/                       # Core library
+│   ├── __init__.py             # Public API
+│   ├── ast_analyzer.py         # AST + symbol table (v8.1)
+│   └── graph_analyzer.py       # Graph analysis + dynamic thresholds
+├── docs/                        # Changelogs and documentation
+│   ├── role_classifier_v9_changelog.md
+│   └── ast_analyzer_v8.1_changelog.md
+├── reference_docs/              # Design documents (Chinese)
+│   ├── 代码角色识别规则.md
+│   ├── 解释角色化PageRank.md
+│   ├── 目标Benchmark与Baseline.md
+│   └── ...
+├── deprecated/                  # Older versions
+│   ├── role_classifier_v7.py
+│   └── role_classifier_v8.py
+└── repos_to_be_examined/        # Test repositories
+    ├── auto-nag/
+    └── lithium/
+```
 
 ## Dependencies
 
-- Core: Python 3.12+ (no external dependencies for core analysis)
-- Optional: pyvis (for HTML visualization)
-- Optional: networkx, matplotlib (for PPR analysis)
-- Package manager: uv
+- Python 3.8+
+- `pydeps` (optional, for auto-generating dependency graphs)
 
-Note: The project uses a pure AST-based import scanner for dependency analysis, eliminating the need for runtime environment setup of the analyzed project.
+```bash
+pip install pydeps
+```
+
+## Key Features Added in Recent Versions
+
+### v9.2 (Latest)
+- `RoleSource` enum for tracking role assignment origins
+- Separated FQN vs Simple Name indexing in symbol table
+- Weak signal override logic
+- Structured `BaseInfo` for inheritance tracking
+
+### v9.1
+- Dynamic threshold system based on repository statistics
+- Adaptive percentile selection by repo size
+- Removed hardcoded magic numbers (0.3, 5, 10, etc.)
+
+### v9.0
+- Three-layer fusion architecture
+- Automatic dependency graph generation via pydeps
+- Graph topology roles (HUB, ORCHESTRATOR, BRIDGE, etc.)
+- Architectural layer inference
+- Fusion rules table
+
+### v8.0
+- Two-phase analysis (collection + propagation)
+- Cross-file symbol table
+- Role inheritance through class hierarchies
+
+## Important Concepts
+
+### Role Purity
+A metric (0.0-1.0) indicating how "pure" a file is in its primary role:
+- 1.0 = All entities have the same role
+- <1.0 = Mixed roles within the file
+
+### Confidence Scores
+- AST confidence: Based on signal strength (framework/structure/path)
+- Graph confidence: Based on topological features
+- Final confidence: Fusion-adjusted confidence
+
+### Reasoning Chains
+Every role assignment includes human-readable reasoning:
+- AST reasoning: Why the AST layer chose this role
+- Graph reasoning: Why the graph layer chose this role
+- Fusion reasoning: Why the final role differs (or doesn't) from AST
+
+## Development Guidelines
+
+### When Adding New Roles
+1. Add to `Role` enum in `raacs/ast_analyzer.py`
+2. Define framework fingerprints (strong signals)
+3. Define structural patterns (semantic signals)
+4. Define path hints (weak signals)
+5. Update fusion rules in `role_classifier_v9.py`
+6. Update documentation
+
+### When Modifying Thresholds
+- Use `DynamicThresholds` system - DO NOT hardcode
+- Base on statistical distribution (P50, P75, P90, etc.)
+- Consider repository scale impact
+- Test on tiny/small/medium/large repos
+
+### Code Style
+- Type hints everywhere
+- Dataclasses for structured data
+- Enums for categorical values
+- Clear reasoning strings for explainability
+- Debug mode support in all analyzers
+
+## Research Context
+
+This project is part of research on:
+- Automated code understanding
+- Architecture recovery from source code
+- Context compression for LLM-based code analysis
+- Role-based PageRank (PPR) for minimal context construction
+
+See `reference_docs/` for research notes (in Chinese).
+
+## Testing Repositories
+
+Sample projects in `repos_to_be_examined/`:
+- `auto-nag/` - Bugzilla automation tool (complex business logic)
+- `lithium/` - Fuzzing test case reducer (scripting/testing focus)
+
+## Known Limitations
+
+1. **Python-only**: Currently only analyzes Python codebases
+2. **pydeps dependency**: Graph layer requires pydeps (installable via pip)
+3. **Import-based**: Relies on import statements for dependency graph
+4. **Static analysis**: Cannot detect runtime behaviors
+5. **Framework coverage**: Best results with mainstream frameworks (Django, Flask, FastAPI, Pydantic, SQLAlchemy)
+
+## Color Coding (CLI Output)
+
+- TEST: Gray (90)
+- NAMESPACE: Cyan (36)
+- INTERFACE: Magenta (35)
+- SCHEMA: Blue (34)
+- ADAPTER: Yellow (33)
+- CONFIG: White (37)
+- SCRIPT: Red (31)
+- UTIL: Light Cyan (96)
+- LOGIC: Green (32)
+- UNKNOWN: Default (0)
+
+## When to Use This Tool
+
+**Good for:**
+- Understanding unfamiliar codebases quickly
+- Validating architectural assumptions
+- Identifying misplaced files (e.g., logic in adapter layer)
+- Code review assistance
+- Documentation generation
+- Refactoring planning
+
+**Not suitable for:**
+- Real-time analysis (AST parsing is slow)
+- Non-Python projects
+- Codebases with heavy metaprogramming
+- Projects without clear architectural patterns
+
+## Future Work (from reference docs)
+
+- Role-based PageRank (PPR) integration
+- LLM-based context compression
+- Benchmark against SWE-bench
+- Multi-language support
+- Real-time analysis optimization
+
+---
+
+**Note for AI Assistants**: This project emphasizes explainability - every classification includes reasoning chains. When modifying code, preserve this transparency. All thresholds should be dynamic, not hardcoded. Chinese documentation in `reference_docs/` contains important design rationale.
