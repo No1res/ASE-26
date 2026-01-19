@@ -330,7 +330,7 @@ class DependencyGraphAnalyzer:
     @staticmethod
     def build_from_symbol_table(symbol_table) -> Dict:
         """
-        Build dependency graph directly from AST symbol table (Replacing pydeps).
+        Build dependency graph directly from AST symbol table.
         
         Args:
             symbol_table: ProjectSymbolTable from ast_analyzer
@@ -343,7 +343,7 @@ class DependencyGraphAnalyzer:
         # 1. Build module_path -> file_path lookup
         mod_to_file = {}
         for file_path, file_symbols in symbol_table.files.items():
-            if file_symbols.module_path:
+            if file_symbols.module_path is not None:  # Ensure not None
                 mod_to_file[file_symbols.module_path] = file_path
         
         # 2. Initialize nodes
@@ -363,7 +363,6 @@ class DependencyGraphAnalyzer:
             
             seen_imports = set()
             
-            # Iterate through imports collected by AST
             for import_info in file_symbols.imports.values():
                 target = import_info.source_module
                 if not target:
@@ -374,15 +373,33 @@ class DependencyGraphAnalyzer:
                 # Case A: Exact match
                 if target in mod_to_file:
                     resolved_target = target
-                # Case B: Parent package match (e.g., from raacs.utils import x -> depends on raacs.utils)
                 else:
+                    # Case B: Parent package match (e.g. from raacs.utils import x)
                     parts = target.split('.')
+                    
+                    # Try reducing from the right (standard parent package check)
                     for i in range(len(parts), 0, -1):
                         sub_mod = '.'.join(parts[:i])
                         if sub_mod in mod_to_file:
                             resolved_target = sub_mod
                             break
-                
+                    
+                    # Case C: Prefix mismatch / Package root stripping
+                    # e.g. import 'auto_nag.bug' but node is 'bug'
+                    if not resolved_target and len(parts) > 1:
+                        # Try stripping the first component (package name)
+                        without_prefix = '.'.join(parts[1:])
+                        if without_prefix in mod_to_file:
+                            resolved_target = without_prefix
+                        # Also try stripping first component + parent match
+                        else:
+                            sub_parts = parts[1:]
+                            for i in range(len(sub_parts), 0, -1):
+                                sub_mod = '.'.join(sub_parts[:i])
+                                if sub_mod in mod_to_file:
+                                    resolved_target = sub_mod
+                                    break
+
                 # Add edge
                 if resolved_target and resolved_target != source_mod:
                     if resolved_target not in seen_imports:

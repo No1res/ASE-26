@@ -348,12 +348,10 @@ class IntegratedRoleAnalyzer:
         )
     
     def _path_to_module(self, file_path: str) -> Optional[str]:
-        """将文件路径转换为模块名（与 pydeps 格式匹配）"""
+        """Convert file path to module name (Consistent with SymbolCollector)"""
         try:
-            # 获取相对于项目父目录的路径，这样会包含项目名
-            # 例如: /path/to/federation/entities/base.py -> federation.entities.base
-            parent_dir = os.path.dirname(self.project_root)
-            rel_path = os.path.relpath(file_path, parent_dir)
+            # FIX: Use project_root, not parent_dir, to align with SymbolCollector/Graph keys
+            rel_path = os.path.relpath(file_path, self.project_root)
             
             module_path = rel_path.replace(os.sep, '.').replace('/', '.')
             if module_path.endswith('.py'):
