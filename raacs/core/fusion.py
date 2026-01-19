@@ -34,6 +34,30 @@ class DependencyGraphGenerator:
     """依赖图生成器 - 内置 pydeps 调用"""
 
     @staticmethod
+    def _find_python_packages(project_root: str) -> List[str]:
+        """
+        查找项目中的 Python 包（包含 __init__.py 的目录）
+
+        Returns:
+            包名列表（相对于 project_root）
+        """
+        packages = []
+        for item in os.listdir(project_root):
+            item_path = os.path.join(project_root, item)
+            if os.path.isdir(item_path):
+                init_file = os.path.join(item_path, '__init__.py')
+                if os.path.exists(init_file):
+                    # 检查是否是有效的 Python 包名（不含 - 等非法字符）
+                    if item.isidentifier():
+                        packages.append(item)
+        return packages
+
+    @staticmethod
+    def _is_valid_module_name(name: str) -> bool:
+        """检查是否是有效的 Python 模块名"""
+        return name.isidentifier()
+
+    @staticmethod
     def generate(project_root: str, output_path: Optional[str] = None,
                  debug: bool = False) -> Optional[Dict]:
         """
@@ -66,29 +90,69 @@ class DependencyGraphGenerator:
                 print("[Hint] Install with: pip install pydeps")
             return None
 
+        # 确定要分析的目标
+        # 如果项目目录名不是有效的 Python 模块名，尝试查找内部的包
+        if not DependencyGraphGenerator._is_valid_module_name(project_name):
+            if debug:
+                print(f"[DependencyGraph] Project name '{project_name}' is not a valid Python module name")
+
+            # 查找项目内的 Python 包
+            packages = DependencyGraphGenerator._find_python_packages(project_root)
+            if debug:
+                print(f"[DependencyGraph] Found Python packages: {packages}")
+
+            if not packages:
+                if debug:
+                    print("[Warning] No valid Python packages found in project")
+                return None
+
+            # 使用找到的包，在项目目录内执行 pydeps
+            target_package = packages[0]  # 使用第一个找到的包
+            working_dir = project_root
+            if debug:
+                print(f"[DependencyGraph] Using package '{target_package}' as target")
+        else:
+            target_package = project_name
+            working_dir = os.path.dirname(project_root)
+
         try:
             if debug:
-                print(f"[DependencyGraph] Generating dependency map for {project_root}...")
+                print(f"[DependencyGraph] Generating dependency map...")
+                print(f"[DependencyGraph] Target package: {target_package}")
+                print(f"[DependencyGraph] Working directory: {working_dir}")
 
             # 调用 pydeps - JSON 输出到 stdout
             cmd = [
                 'pydeps',
-                project_name,  # 使用项目名而非完整路径
+                target_package,
                 '--show-deps',
                 '--no-show',
             ]
+
+            if debug:
+                print(f"[DependencyGraph] Command: {' '.join(cmd)}")
 
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=os.path.dirname(project_root)  # 在父目录执行
+                cwd=working_dir
             )
+
+            if debug:
+                print(f"[DependencyGraph] Return code: {result.returncode}")
+                print(f"[DependencyGraph] Stdout length: {len(result.stdout) if result.stdout else 0}")
+                if result.stderr:
+                    # 只显示前几行错误，避免刷屏
+                    stderr_lines = result.stderr.strip().split('\n')
+                    print(f"[DependencyGraph] Stderr ({len(stderr_lines)} lines): {stderr_lines[0] if stderr_lines else '(empty)'}")
+                if result.stdout:
+                    print(f"[DependencyGraph] Stdout preview: {result.stdout[:200]}...")
 
             # pydeps 即使成功也可能返回非零退出码，检查输出
             if not result.stdout or not result.stdout.strip().startswith('{'):
                 if debug:
-                    print(f"[Warning] pydeps failed: {result.stderr}")
+                    print(f"[Warning] pydeps output is not valid JSON")
                 return None
 
             # 解析 JSON 输出
@@ -96,6 +160,9 @@ class DependencyGraphGenerator:
 
             if debug:
                 print(f"[DependencyGraph] Generated dependency map with {len(dep_map)} modules")
+                if dep_map:
+                    sample_keys = list(dep_map.keys())[:5]
+                    print(f"[DependencyGraph] Sample modules: {sample_keys}")
 
             # 如果指定了输出路径，保存到文件
             if output_path:

@@ -8,9 +8,6 @@
 import os
 from typing import List, Optional
 
-from raacs.adapters.pydeps import PydepsExtractor
-from raacs.core.ast import CodeRoleClassifier, SymbolCollector, ProjectSymbolTable, RolePropagator
-from raacs.core.graph import DependencyGraphAnalyzer
 from raacs.core.fusion import IntegratedRoleAnalyzer, IntegratedRoleResult
 
 
@@ -22,34 +19,29 @@ def run_analysis(project_root: str, debug: bool = False) -> List[IntegratedRoleR
     3. 执行图结构分析
     4. 三层信号融合，生成最终角色
 
+    Args:
+        project_root: 待分析的代码仓库根目录
+        debug: 调试模式
+
     Returns:
         集成角色分析结果列表。
     """
     project_root = os.path.abspath(project_root)
 
-    # 1) 调用 pydeps 生成依赖图
-    dep_map = PydepsExtractor.extract(project_root, debug=debug)
-
-    # 2) 第一次遍历：AST 分析 + 符号收集
-    symbol_collector = SymbolCollector(project_root)
-    symbol_collector.collect()
-
-    classifier = CodeRoleClassifier()
-    file_analyses = classifier.analyze_project(project_root)
-
-    # 3) 第二次遍历：角色传播
-    propagator = RolePropagator(symbol_collector.project_symbol_table)
-    propagator.propagate()
-
-    # 4) 图分析
-    graph_analyzer = DependencyGraphAnalyzer(dep_map) if dep_map else None
-
-    # 5) 融合
+    # IntegratedRoleAnalyzer 是自包含的，会自动执行：
+    # 1. 符号表构建
+    # 2. 角色传播
+    # 3. AST 分析
+    # 4. 依赖图生成（如果 pydeps 可用）
+    # 5. 图结构分析
     analyzer = IntegratedRoleAnalyzer(
-        file_analyses=file_analyses,
-        symbol_table=symbol_collector.project_symbol_table,
-        graph_analyzer=graph_analyzer
+        project_root=project_root,
+        auto_generate_deps=True,
+        debug=debug
     )
-    final_results: List[IntegratedRoleResult] = analyzer.integrate()
 
-    return final_results
+    # 分析整个项目并返回结果
+    results_dict = analyzer.analyze_project()
+
+    # 转换为列表返回
+    return list(results_dict.values())
