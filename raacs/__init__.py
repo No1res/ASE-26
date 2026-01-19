@@ -1,70 +1,60 @@
+# raacs/__init__.py
 """
-RAACS (Role-Aware Adaptive Context System) - 核心库
+RAACS 顶层包，导出常用类和函数。
 
-提供代码角色分类的核心功能：
-- ast_analyzer: AST 层分析 + 符号表层分析 (v8.1)
-- graph_analyzer: 图结构层分析 + 动态阈值系统
+外部用户可以通过 `from raacs import Role, CodeRoleClassifier, DependencyGraphAnalyzer` 等方式使用。
 
-v8.1 新增：
-- RoleSource: 角色来源追踪
-- BaseInfo: 结构化基类信息
-- 分离索引结构
-- 弱信号覆盖逻辑
+注意：PPR 扩散相关类 (CodeGraphBuilder, GraphVisualizer, run_ppr) 需要 networkx 依赖，
+请使用 `from raacs.core.diffusion import ...` 单独导入。
 """
 
-__version__ = "9.2"
+# 角色定义
+from .core.roles import Role, RoleSource, ROLE_SOURCE_STRENGTH, ROLE_COMPATIBILITY, SignalWeight
 
-# AST 分析器
-from .ast_analyzer import (
-    CodeRoleClassifier,
-    Role,
-    RoleSource,           # 新增
-    FileAnalysis,
-    SymbolCollector,
-    RolePropagator,
-    ProjectSymbolTable,
-    EntityRole,
-    RoleScore,
-    BaseInfo,             # 新增
-    ClassSymbol,          # 新增
-    ROLE_SOURCE_STRENGTH, # 新增
-)
+# AST 分析
+from .core.ast import CodeRoleClassifier, FileAnalysis, SymbolCollector, ProjectSymbolTable, RolePropagator, safe_parse_source
 
-# 图结构分析器
-from .graph_analyzer import (
-    DependencyGraphAnalyzer,
-    GraphRole,
-    ArchitecturalLayer,
-    GraphRoleResult,
-    GraphFeatures,
-    RepositoryStats,
-    DynamicThresholds,
-    compute_repository_stats,
-)
+# 图分析
+from .core.graph import GraphRole, ArchitecturalLayer, GraphRoleResult, DependencyGraphAnalyzer, RepositoryStats, DynamicThresholds
+
+# 融合层
+from .core.fusion import IntegratedRoleAnalyzer, IntegratedRoleResult, DependencyGraphGenerator
+
+# 静态 Import 扫描器（无需运行时环境）
+from .adapters.import_scanner import StaticImportScanner, scan_imports
+
+# 可视化（延迟导入，需要 pyvis）
+# 使用 from raacs.adapters.viz import RoleGraphVisualizer, generate_role_viz
+
+# PPR 扩散（延迟导入，需要 networkx）
+# 使用 from raacs.core.diffusion import run_ppr, CodeGraphBuilder, GraphVisualizer
 
 __all__ = [
+    # 角色定义
+    "Role",
+    "RoleSource",
+    "ROLE_SOURCE_STRENGTH",
+    "ROLE_COMPATIBILITY",
+    "SignalWeight",
     # AST 分析
-    'CodeRoleClassifier',
-    'Role',
-    'RoleSource',
-    'FileAnalysis',
-    'SymbolCollector',
-    'RolePropagator',
-    'ProjectSymbolTable',
-    'EntityRole',
-    'RoleScore',
-    'BaseInfo',
-    'ClassSymbol',
-    'ROLE_SOURCE_STRENGTH',
-    
-    # 图结构分析
-    'DependencyGraphAnalyzer',
-    'GraphRole',
-    'ArchitecturalLayer',
-    'GraphRoleResult',
-    'GraphFeatures',
-    'RepositoryStats',
-    'DynamicThresholds',
-    'compute_repository_stats',
+    "CodeRoleClassifier",
+    "FileAnalysis",
+    "SymbolCollector",
+    "ProjectSymbolTable",
+    "RolePropagator",
+    "safe_parse_source",
+    # 图分析
+    "GraphRole",
+    "ArchitecturalLayer",
+    "GraphRoleResult",
+    "DependencyGraphAnalyzer",
+    "RepositoryStats",
+    "DynamicThresholds",
+    # 融合层
+    "IntegratedRoleAnalyzer",
+    "IntegratedRoleResult",
+    "DependencyGraphGenerator",
+    # 静态扫描器
+    "StaticImportScanner",
+    "scan_imports",
 ]
-

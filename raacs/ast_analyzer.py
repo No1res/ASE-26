@@ -1,12 +1,35 @@
 import ast
 import os
 import argparse
+import warnings
 from collections import defaultdict
 from typing import Set, List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import re
+
+
+def safe_parse_source(source: str, filename: str = "<unknown>") -> Optional[ast.AST]:
+    """
+    安全地解析 Python 源代码，抑制 SyntaxWarning。
+    
+    被分析的代码可能包含无效的转义序列（如 JSON 中的 \\/ ），
+    这些在 Python 中会产生 SyntaxWarning，但不影响 AST 解析。
+    
+    Args:
+        source: Python 源代码字符串
+        filename: 文件名（用于错误信息）
+        
+    Returns:
+        AST 树，解析失败返回 None
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=SyntaxWarning)
+        try:
+            return ast.parse(source, filename=filename)
+        except SyntaxError:
+            return None
 
 
 class Role(Enum):
@@ -434,8 +457,10 @@ class SymbolCollector:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 source = f.read()
-            tree = ast.parse(source)
-        except (SyntaxError, UnicodeDecodeError):
+            tree = safe_parse_source(source, filename=file_path)
+            if tree is None:
+                return
+        except UnicodeDecodeError:
             return
         
         file_symbols = FileSymbols(
@@ -970,9 +995,8 @@ class CodeRoleClassifier:
     
     def analyze_source(self, source_code: str, file_path: str = "") -> FileAnalysis:
         """核心分析流水线"""
-        try:
-            tree = ast.parse(source_code)
-        except SyntaxError:
+        tree = safe_parse_source(source_code, filename=file_path or "<string>")
+        if tree is None:
             return self._empty_result(file_path, "Syntax error")
         
         filename = os.path.basename(file_path).lower() if file_path else ""
