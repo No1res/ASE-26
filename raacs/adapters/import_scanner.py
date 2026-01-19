@@ -8,6 +8,7 @@
 
 import ast
 import os
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Optional, Tuple
 from pathlib import Path
@@ -250,7 +251,11 @@ class StaticImportScanner:
                 with open(info.path, 'r', encoding='utf-8', errors='ignore') as f:
                     source = f.read()
 
-                tree = ast.parse(source, filename=info.path)
+                # 抑制 SyntaxWarning（被分析代码中的无效转义序列等）
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=SyntaxWarning)
+                    tree = ast.parse(source, filename=info.path)
+                
                 visitor = ImportVisitor(module_name, self.project_root)
                 visitor.visit(tree)
 

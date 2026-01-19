@@ -12,7 +12,7 @@ RAACS 顶层包，导出常用类和函数。
 from .core.roles import Role, RoleSource, ROLE_SOURCE_STRENGTH, ROLE_COMPATIBILITY, SignalWeight
 
 # AST 分析
-from .core.ast import CodeRoleClassifier, FileAnalysis, SymbolCollector, ProjectSymbolTable, RolePropagator
+from .core.ast import CodeRoleClassifier, FileAnalysis, SymbolCollector, ProjectSymbolTable, RolePropagator, safe_parse_source
 
 # 图分析
 from .core.graph import GraphRole, ArchitecturalLayer, GraphRoleResult, DependencyGraphAnalyzer, RepositoryStats, DynamicThresholds
@@ -22,6 +22,9 @@ from .core.fusion import IntegratedRoleAnalyzer, IntegratedRoleResult, Dependenc
 
 # 静态 Import 扫描器（无需运行时环境）
 from .adapters.import_scanner import StaticImportScanner, scan_imports
+
+# 可视化（延迟导入，需要 pyvis）
+# 使用 from raacs.adapters.viz import RoleGraphVisualizer, generate_role_viz
 
 # PPR 扩散（延迟导入，需要 networkx）
 # 使用 from raacs.core.diffusion import run_ppr, CodeGraphBuilder, GraphVisualizer
@@ -39,6 +42,7 @@ __all__ = [
     "SymbolCollector",
     "ProjectSymbolTable",
     "RolePropagator",
+    "safe_parse_source",
     # 图分析
     "GraphRole",
     "ArchitecturalLayer",

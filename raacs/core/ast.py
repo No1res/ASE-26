@@ -18,6 +18,7 @@ from raacs.ast_analyzer import (
     SymbolCollector,
     ProjectSymbolTable,
     RolePropagator,
+    safe_parse_source,
 )
 
 # 对外暴露这些类
@@ -27,4 +28,5 @@ __all__ = [
     "SymbolCollector",
     "ProjectSymbolTable",
     "RolePropagator",
+    "safe_parse_source",
 ]
