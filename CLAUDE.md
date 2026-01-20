@@ -4,7 +4,7 @@
 
 RAACS (Role-Adaptive Architecture Classification System) is a three-layer code role classification tool that analyzes Python codebases to identify architectural roles of files and entities. It combines AST analysis, symbol table propagation, and dependency graph analysis to classify code into architectural roles with confidence scores.
 
-**Current Version**: v9.2
+**Current Version**: v9.3
 **Status**: Active development
 **Language**: Python 3.8+
 
@@ -35,14 +35,19 @@ Layer 2: Symbol Table Layer
 ├─ How: Role propagation through class hierarchies
 └─ Answers: "What is this file a subclass OF?"
 
-Layer 3: Graph Layer (NEW in v9)
+Layer 3: Graph Layer
 ├─ What: Dependency network analysis
-├─ How: pydeps-based graph topology + dynamic thresholds
+├─ How: Static import scanning + graph topology + dynamic thresholds
 ├─ GraphRoles: HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE
 └─ Answers: "WHERE is this file in the architecture?"
 
+Layer 4: Spectral Layer (NEW in v9.3)
+├─ What: Laplacian Eigenvector analysis
+├─ How: Graph spectral decomposition + PPR integration
+└─ Answers: "Which modules belong to the same functional cluster?"
+
 Fusion: Weighted Role Fusion
-├─ What: Combines all three layers with fusion rules
+├─ What: Combines all layers with fusion rules
 └─ Output: Final architectural role + confidence + reasoning
 ```
 
@@ -54,6 +59,7 @@ Fusion: Weighted Role Fusion
 ### RAACS Library (`raacs/`)
 - `ast_analyzer.py` (v8.1) - AST analysis + symbol table + role propagation
 - `graph_analyzer.py` - Dependency graph analysis with dynamic thresholds
+- `spectral_ppr.py` (v9.3) - Laplacian Eigenvector + PageRank integration
 - `__init__.py` - Public API exports
 
 ### Key Classes
@@ -67,9 +73,13 @@ Fusion: Weighted Role Fusion
 
 **Graph Layer:**
 - `DependencyGraphAnalyzer` - Graph topology analyzer with dynamic thresholds
-- `DependencyGraphGenerator` - pydeps wrapper for auto-generation
 - `DynamicThresholds` - Repository-scale-aware threshold computation
 - `RepositoryStats` - In/out-degree distribution statistics
+
+**Spectral Layer (v9.3):**
+- `SpectralAnalyzer` - Laplacian eigenvector computation and clustering
+- `SpectralPPR` - Spectral-weighted Personalized PageRank
+- `SpectralEmbedding` - Node embeddings from Fiedler vector
 
 **Fusion:**
 - `IntegratedRoleAnalyzer` - Three-layer fusion orchestrator
@@ -80,53 +90,9 @@ Fusion: Weighted Role Fusion
 - `GraphRole` - 6 graph topology roles (HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE)
 - `ArchitecturalLayer` - 3 layers (APPLICATION, INTERFACE, INFRASTRUCTURE)
 
-## How It Works
-
-### Recognition Strategy (Weighted Scoring)
-
-1. **Priority 1: Framework Fingerprints (Weight: 4.0)**
-   - Explicit imports: `pytest`, `unittest`, `flask`, `fastapi`, `pydantic`, `sqlalchemy`
-   - Decorators: `@fixture`, `@route`, `@dataclass`, `@api_view`
-   - Base classes: `TestCase`, `BaseModel`, `ABC`, `Protocol`
-
-2. **Priority 2: Structural Patterns (Weight: 2.5)**
-   - Assert density (TEST)
-   - Field-to-method ratio (SCHEMA)
-   - Abstraction rate (INTERFACE)
-   - I/O parameter patterns (ADAPTER)
-   - Complexity metrics (LOGIC vs UTIL)
-
-3. **Priority 3: Path Hints (Weight: 1.5)**
-   - Directory names: `tests/`, `utils/`, `models/`, `api/`
-   - File naming conventions: `test_*.py`, `config.py`, `__init__.py`
-
-4. **Fallback: LOGIC**
-   - Default for files with complex logic that don't match other patterns
-
-### Dynamic Thresholds (v9.1)
-
-RAACS adapts to repository size using statistical distribution:
-
-| Repo Size | Modules | HUB Percentile | ORCH Percentile | APP Layer Ratio |
-|-----------|---------|----------------|-----------------|-----------------|
-| tiny      | <30     | P80            | P80             | 0.50            |
-| small     | 30-100  | P85            | P85             | 0.55            |
-| medium    | 100-300 | P90            | P90             | 0.60            |
-| large     | 300-1000| P92            | P92             | 0.65            |
-| huge      | >1000   | P95            | P95             | 0.70            |
-
-### Fusion Rules
-
-Key examples of AST + Graph → Final role:
-- (LOGIC, HUB) → UTIL (high centrality suggests core utility)
-- (LOGIC, ORCHESTRATOR) → LOGIC (confirms business logic)
-- (LOGIC, SINK) → SCRIPT (entry point)
-- (LOGIC, LEAF) → UTIL (stateless utility)
-- (LOGIC, BRIDGE) → ADAPTER (adapter layer)
-
 ## Usage
 
-### Command Line
+### Command Line (role_classifier_v9.py)
 
 ```bash
 # Basic analysis (auto-generates dependency graph)
@@ -144,11 +110,63 @@ python role_classifier_v9.py /path/to/project --save-deps deps.json
 # Use pre-generated dependency graph
 python role_classifier_v9.py /path/to/project --dep-map deps.json
 
-# Disable auto-generation
-python role_classifier_v9.py /path/to/project --no-auto-deps
-
 # Version info
 python role_classifier_v9.py --version
+```
+
+### Spectral PPR (NEW in v9.3)
+
+```bash
+# Install dependencies
+pip install numpy scipy networkx
+```
+
+```python
+from raacs.spectral_ppr import SpectralAnalyzer, SpectralPPR, create_spectral_ppr
+
+# 1. Prepare dependency map (from static import scanner or other source)
+dep_map = {
+    'core.models': {'imports': ['core.base', 'utils.helpers'], 'path': '/path/to/core/models.py'},
+    'core.base': {'imports': [], 'path': '/path/to/core/base.py'},
+    'core.services': {'imports': ['core.models', 'core.base'], 'path': '/path/to/core/services.py'},
+    'utils.helpers': {'imports': [], 'path': '/path/to/utils/helpers.py'},
+    'api.views': {'imports': ['core.services', 'core.models'], 'path': '/path/to/api/views.py'},
+    'api.routes': {'imports': ['api.views'], 'path': '/path/to/api/routes.py'},
+}
+
+# 2. Spectral Analysis (Laplacian Eigenvector)
+analyzer = SpectralAnalyzer(dep_map)
+embedding = analyzer.compute_embedding()
+
+# Get Fiedler vector (for module partitioning)
+print(f"Fiedler values: {embedding.fiedler_vector}")
+# Positive/negative values indicate different functional clusters
+
+# Get spectral clustering
+clusters = analyzer.get_clusters(n_clusters=3)
+print(f"Clusters: {clusters}")
+# Output: {'core.models': 0, 'core.base': 0, 'api.views': 1, ...}
+
+# Get spectral centrality ranking
+centrality = analyzer.rank_by_centrality()
+print(f"Most central modules: {centrality[:5]}")
+
+# 3. Spectral-Weighted PPR (Context Window)
+ppr = SpectralPPR(dep_map, sigma=1.0)
+
+# Get context window for a target module
+target = 'api.views'
+context = ppr.run_ppr(target, top_k=10, alpha=0.85)
+print(f"Context window for {target}:")
+for module, score in context:
+    print(f"  {module}: {score:.4f}")
+
+# With cluster boost (same-cluster modules get higher scores)
+context_boosted = ppr.run_ppr_with_cluster_boost(target, top_k=10, cluster_boost=1.5)
+
+# 4. Filter important nodes (for visualization)
+important_nodes = ppr.get_filtered_nodes(max_nodes=50)
+print(f"Important nodes: {important_nodes}")
 ```
 
 ### As a Library
@@ -193,7 +211,8 @@ role_classifier_CLAUDE/
 ├── raacs/                       # Core library
 │   ├── __init__.py             # Public API
 │   ├── ast_analyzer.py         # AST + symbol table (v8.1)
-│   └── graph_analyzer.py       # Graph analysis + dynamic thresholds
+│   ├── graph_analyzer.py       # Graph analysis + dynamic thresholds
+│   └── spectral_ppr.py         # Laplacian + PPR (v9.3)
 ├── docs/                        # Changelogs and documentation
 │   ├── role_classifier_v9_changelog.md
 │   └── ast_analyzer_v8.1_changelog.md
@@ -212,16 +231,29 @@ role_classifier_CLAUDE/
 
 ## Dependencies
 
+### Core (no external dependencies)
 - Python 3.8+
-- `pydeps` (optional, for auto-generating dependency graphs)
+
+### Optional (for specific features)
 
 ```bash
-pip install pydeps
+# For Spectral PPR (v9.3)
+pip install numpy scipy networkx
+
+# For visualization
+pip install pyvis matplotlib
 ```
 
 ## Key Features Added in Recent Versions
 
-### v9.2 (Latest)
+### v9.3 (Latest)
+- **Spectral PPR**: Laplacian Eigenvector + PageRank integration
+- **SpectralAnalyzer**: Graph spectral decomposition for clustering
+- **Fiedler vector**: Module partitioning based on graph cuts
+- **Spectral-weighted edges**: PPR prefers same-cluster propagation
+- **Node filtering**: `get_filtered_nodes()` for visualization
+
+### v9.2
 - `RoleSource` enum for tracking role assignment origins
 - Separated FQN vs Simple Name indexing in symbol table
 - Weak signal override logic
@@ -234,56 +266,86 @@ pip install pydeps
 
 ### v9.0
 - Three-layer fusion architecture
-- Automatic dependency graph generation via pydeps
+- Automatic dependency graph generation
 - Graph topology roles (HUB, ORCHESTRATOR, BRIDGE, etc.)
 - Architectural layer inference
 - Fusion rules table
 
-### v8.0
-- Two-phase analysis (collection + propagation)
-- Cross-file symbol table
-- Role inheritance through class hierarchies
+## How Spectral PPR Works
 
-## Important Concepts
+### Laplacian Eigenvector
 
-### Role Purity
-A metric (0.0-1.0) indicating how "pure" a file is in its primary role:
-- 1.0 = All entities have the same role
-- <1.0 = Mixed roles within the file
+The Laplacian matrix `L = D - A` captures graph structure:
+- **Fiedler vector** (2nd eigenvector): Optimal graph bipartition
+- **Positive values**: One functional cluster
+- **Negative values**: Another functional cluster
+- **Near zero**: Bridge modules (adapters/interfaces)
 
-### Confidence Scores
-- AST confidence: Based on signal strength (framework/structure/path)
-- Graph confidence: Based on topological features
-- Final confidence: Fusion-adjusted confidence
+### Spectral-Weighted PPR
 
-### Reasoning Chains
-Every role assignment includes human-readable reasoning:
-- AST reasoning: Why the AST layer chose this role
-- Graph reasoning: Why the graph layer chose this role
-- Fusion reasoning: Why the final role differs (or doesn't) from AST
+```
+edge_weight(A → B) = ast_weight × (1 + spectral_similarity(A, B))
 
-## Development Guidelines
+spectral_similarity(A, B) = exp(-||v(A) - v(B)||² / (2σ²))
+```
 
-### When Adding New Roles
-1. Add to `Role` enum in `raacs/ast_analyzer.py`
-2. Define framework fingerprints (strong signals)
-3. Define structural patterns (semantic signals)
-4. Define path hints (weak signals)
-5. Update fusion rules in `role_classifier_v9.py`
-6. Update documentation
+**Effect**: PPR propagates faster within the same functional cluster, producing more focused context windows.
 
-### When Modifying Thresholds
-- Use `DynamicThresholds` system - DO NOT hardcode
-- Base on statistical distribution (P50, P75, P90, etc.)
-- Consider repository scale impact
-- Test on tiny/small/medium/large repos
+| Edge Type | Traditional Weight | Spectral-Weighted |
+|-----------|-------------------|-------------------|
+| Same-cluster import | 1.0 | ~1.5 ↑ |
+| Cross-cluster import | 1.0 | ~1.1 |
+| Same-cluster inheritance | 3.0 | ~4.5 ↑ |
+| Cross-cluster inheritance | 3.0 | ~3.3 |
 
-### Code Style
-- Type hints everywhere
-- Dataclasses for structured data
-- Enums for categorical values
-- Clear reasoning strings for explainability
-- Debug mode support in all analyzers
+## Recognition Strategy (Weighted Scoring)
+
+1. **Priority 1: Framework Fingerprints (Weight: 4.0)**
+   - Explicit imports: `pytest`, `unittest`, `flask`, `fastapi`, `pydantic`, `sqlalchemy`
+   - Decorators: `@fixture`, `@route`, `@dataclass`, `@api_view`
+   - Base classes: `TestCase`, `BaseModel`, `ABC`, `Protocol`
+
+2. **Priority 2: Structural Patterns (Weight: 2.5)**
+   - Assert density (TEST)
+   - Field-to-method ratio (SCHEMA)
+   - Abstraction rate (INTERFACE)
+   - I/O parameter patterns (ADAPTER)
+   - Complexity metrics (LOGIC vs UTIL)
+
+3. **Priority 3: Path Hints (Weight: 1.5)**
+   - Directory names: `tests/`, `utils/`, `models/`, `api/`
+   - File naming conventions: `test_*.py`, `config.py`, `__init__.py`
+
+4. **Fallback: LOGIC**
+   - Default for files with complex logic that don't match other patterns
+
+## Dynamic Thresholds
+
+RAACS adapts to repository size using statistical distribution:
+
+| Repo Size | Modules | HUB Percentile | ORCH Percentile | APP Layer Ratio |
+|-----------|---------|----------------|-----------------|-----------------|
+| tiny      | <30     | P80            | P80             | 0.50            |
+| small     | 30-100  | P85            | P85             | 0.55            |
+| medium    | 100-300 | P90            | P90             | 0.60            |
+| large     | 300-1000| P92            | P92             | 0.65            |
+| huge      | >1000   | P95            | P95             | 0.70            |
+
+## Fusion Rules
+
+Key examples of AST + Graph → Final role:
+- (LOGIC, HUB) → UTIL (high centrality suggests core utility)
+- (LOGIC, ORCHESTRATOR) → LOGIC (confirms business logic)
+- (LOGIC, SINK) → SCRIPT (entry point)
+- (LOGIC, LEAF) → UTIL (stateless utility)
+- (LOGIC, BRIDGE) → ADAPTER (adapter layer)
+
+## Known Limitations
+
+1. **Python-only**: Currently only analyzes Python codebases
+2. **Static analysis**: Cannot detect runtime behaviors
+3. **Import-based**: Relies on import statements for dependency graph
+4. **Framework coverage**: Best results with mainstream frameworks (Django, Flask, FastAPI, Pydantic, SQLAlchemy)
 
 ## Research Context
 
@@ -292,59 +354,9 @@ This project is part of research on:
 - Architecture recovery from source code
 - Context compression for LLM-based code analysis
 - Role-based PageRank (PPR) for minimal context construction
+- Spectral graph theory for code clustering
 
 See `reference_docs/` for research notes (in Chinese).
-
-## Testing Repositories
-
-Sample projects in `repos_to_be_examined/`:
-- `auto-nag/` - Bugzilla automation tool (complex business logic)
-- `lithium/` - Fuzzing test case reducer (scripting/testing focus)
-
-## Known Limitations
-
-1. **Python-only**: Currently only analyzes Python codebases
-2. **pydeps dependency**: Graph layer requires pydeps (installable via pip)
-3. **Import-based**: Relies on import statements for dependency graph
-4. **Static analysis**: Cannot detect runtime behaviors
-5. **Framework coverage**: Best results with mainstream frameworks (Django, Flask, FastAPI, Pydantic, SQLAlchemy)
-
-## Color Coding (CLI Output)
-
-- TEST: Gray (90)
-- NAMESPACE: Cyan (36)
-- INTERFACE: Magenta (35)
-- SCHEMA: Blue (34)
-- ADAPTER: Yellow (33)
-- CONFIG: White (37)
-- SCRIPT: Red (31)
-- UTIL: Light Cyan (96)
-- LOGIC: Green (32)
-- UNKNOWN: Default (0)
-
-## When to Use This Tool
-
-**Good for:**
-- Understanding unfamiliar codebases quickly
-- Validating architectural assumptions
-- Identifying misplaced files (e.g., logic in adapter layer)
-- Code review assistance
-- Documentation generation
-- Refactoring planning
-
-**Not suitable for:**
-- Real-time analysis (AST parsing is slow)
-- Non-Python projects
-- Codebases with heavy metaprogramming
-- Projects without clear architectural patterns
-
-## Future Work (from reference docs)
-
-- Role-based PageRank (PPR) integration
-- LLM-based context compression
-- Benchmark against SWE-bench
-- Multi-language support
-- Real-time analysis optimization
 
 ---
 

@@ -1,4 +1,4 @@
-__version__ = "9.2"
+__version__ = "9.3"
 
 import os
 import sys
@@ -6,13 +6,13 @@ import json
 import argparse
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from pathlib import Path
 
 # 导入 RAACS 核心库
 from raacs import (
     # AST 分析器
-    CodeRoleClassifier, Role, FileAnalysis, 
+    CodeRoleClassifier, Role, FileAnalysis,
     SymbolCollector, RolePropagator, ProjectSymbolTable,
     RoleSource,  # v9.2: 角色来源追踪
     # 图结构分析器
@@ -20,51 +20,63 @@ from raacs import (
     GraphRoleResult,
 )
 
+# 谱加权 PPR（可选，需要 numpy, scipy, networkx）
+try:
+    from raacs.spectral_ppr import SpectralAnalyzer, SpectralPPR
+    SPECTRAL_AVAILABLE = True
+except ImportError:
+    SPECTRAL_AVAILABLE = False
+
 
 @dataclass
 class IntegratedRoleResult:
     """集成角色分析结果"""
     module_name: str
     file_path: str
-    
+
     # 三层角色
     ast_role: Role
     ast_confidence: float
     ast_reasoning: str
-    
+
     graph_role: GraphRole
     graph_confidence: float
     graph_reasoning: str
-    
+
     architectural_layer: ArchitecturalLayer
-    
+
     # 融合后的最终角色
     final_role: Role
     final_confidence: float
     fusion_reasoning: str
-    
+
     # 实体级信息
     entities: List[dict] = field(default_factory=list)
     role_purity: float = 1.0
-    
+
     # 图特征
     in_degree: int = 0
     out_degree: int = 0
     caller_roles: Dict[str, int] = field(default_factory=dict)
-    
+
     # 继承信息
     inherited_from: str = ""
+
+    # 谱分析特征 (v9.3)
+    spectral_cluster: int = -1
+    fiedler_value: float = 0.0
 
 
 class IntegratedRoleAnalyzer:
     """
     集成角色分析器
-    
+
     分析流程：
     1. 第一遍：AST 分析 + 符号表构建
     2. 第二遍：角色传播（跨文件继承）
     3. 第三遍：图结构分析
-    4. 融合：三层信号融合
+    4. 第四遍：谱分析（Laplacian + PPR）(v9.3)
+    5. 融合：多层信号融合
     """
     
     # 角色融合规则
@@ -92,28 +104,37 @@ class IntegratedRoleAnalyzer:
         (Role.LOGIC, GraphRole.BRIDGE): (Role.ADAPTER, 0.6, "Bridge suggests adapter layer"),
     }
     
-    def __init__(self, project_root: str, dep_map_path: Optional[str] = None, 
-                 debug: bool = False):
+    def __init__(self, project_root: str, dep_map_path: Optional[str] = None,
+                 debug: bool = False, enable_spectral: bool = True):
         """
         Args:
             project_root: 项目根目录
             dep_map_path: 预生成的依赖图 JSON 路径（可选）
             debug: 调试模式
+            enable_spectral: 是否启用谱分析（需要 numpy, scipy, networkx）
         """
         self.project_root = os.path.abspath(project_root)
         self.debug = debug
-        
+        self.enable_spectral = enable_spectral and SPECTRAL_AVAILABLE
+
         # AST 分析器（带符号表）
         self.ast_classifier: Optional[CodeRoleClassifier] = None
         self.symbol_table: Optional[ProjectSymbolTable] = None
-        
+
         # 图结构分析器
         self.graph_analyzer: Optional[DependencyGraphAnalyzer] = None
-        
+
+        # 谱分析器 (v9.3)
+        self.spectral_analyzer: Optional['SpectralAnalyzer'] = None
+        self.spectral_ppr: Optional['SpectralPPR'] = None
+        self._spectral_clusters: Dict[str, int] = {}
+        self._fiedler_values: Dict[str, float] = {}
+
         # 缓存
         self._ast_results: Dict[str, FileAnalysis] = {}
         self._graph_results: Dict[str, GraphRoleResult] = {}
-        
+        self._dep_map: Optional[Dict] = None
+
         # 初始化
         self._initialize_analyzers(dep_map_path)
     
@@ -161,11 +182,52 @@ class IntegratedRoleAnalyzer:
             dep_map = DependencyGraphAnalyzer.build_from_symbol_table(self.symbol_table)
         
         if dep_map:
+            self._dep_map = dep_map
             self.graph_analyzer = DependencyGraphAnalyzer(dep_map, self.project_root, debug=self.debug)
             if self.debug:
                 print(f"[Init] Dependency graph: {len(self.graph_analyzer.internal_modules)} modules")
+
+            # 初始化谱分析器 (v9.3)
+            if self.enable_spectral:
+                self._initialize_spectral(dep_map)
         elif self.debug:
             print("[Init] No dependency graph available, graph layer disabled")
+
+    def _initialize_spectral(self, dep_map: Dict):
+        """初始化谱分析器"""
+        if not SPECTRAL_AVAILABLE:
+            if self.debug:
+                print("[Init] Spectral analysis disabled (missing numpy/scipy/networkx)")
+            return
+
+        try:
+            if self.debug:
+                print("[Init] Initializing spectral analyzer...")
+
+            self.spectral_analyzer = SpectralAnalyzer(dep_map)
+            embedding = self.spectral_analyzer.compute_embedding()
+
+            # 计算聚类
+            n_clusters = min(5, max(2, len(dep_map) // 20))
+            self._spectral_clusters = self.spectral_analyzer.get_clusters(n_clusters)
+
+            # 保存 Fiedler 值
+            for node in embedding.node_list:
+                fiedler = embedding.get_fiedler_value(node)
+                if fiedler is not None:
+                    self._fiedler_values[node] = fiedler
+
+            # 创建 SpectralPPR
+            self.spectral_ppr = SpectralPPR(dep_map, sigma=1.0)
+
+            if self.debug:
+                print(f"[Init] Spectral analysis: {n_clusters} clusters, {len(self._fiedler_values)} nodes embedded")
+
+        except Exception as e:
+            if self.debug:
+                print(f"[Init] Spectral analysis failed: {e}")
+            self.spectral_analyzer = None
+            self.spectral_ppr = None
     
     def analyze_project(self) -> Dict[str, IntegratedRoleResult]:
         """分析整个项目"""
@@ -292,6 +354,10 @@ class IntegratedRoleAnalyzer:
                 'inherited_from': getattr(e, 'inherited_from', '')
             })
         
+        # 谱分析特征 (v9.3)
+        spectral_cluster = self._spectral_clusters.get(module_name, -1) if module_name else -1
+        fiedler_value = self._fiedler_values.get(module_name, 0.0) if module_name else 0.0
+
         return IntegratedRoleResult(
             module_name=module_name or "",
             file_path=file_path,
@@ -309,7 +375,9 @@ class IntegratedRoleAnalyzer:
             role_purity=ast_result.role_purity,
             in_degree=in_degree,
             out_degree=out_degree,
-            caller_roles=caller_roles
+            caller_roles=caller_roles,
+            spectral_cluster=spectral_cluster,
+            fiedler_value=fiedler_value
         )
     
     def _path_to_module(self, file_path: str) -> Optional[str]:
@@ -358,6 +426,10 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--show-fusion", action="store_true", help="Show fusion reasoning")
     parser.add_argument("--show-graph", action="store_true", help="Show graph features")
+    parser.add_argument("--show-spectral", action="store_true", help="Show spectral analysis info (cluster, Fiedler)")
+    parser.add_argument("--no-spectral", action="store_true", help="Disable spectral analysis")
+    parser.add_argument("--ppr-target", metavar="MODULE", help="Run PPR for target module and show context window")
+    parser.add_argument("--ppr-top-k", type=int, default=15, help="Number of context nodes for PPR (default: 15)")
     parser.add_argument("--version", action="version", version=f"v{__version__}")
     args = parser.parse_args()
     
@@ -377,7 +449,8 @@ if __name__ == "__main__":
     analyzer = IntegratedRoleAnalyzer(
         args.project_root,
         dep_map_path=dep_map_path,
-        debug=args.debug
+        debug=args.debug,
+        enable_spectral=not args.no_spectral
     )
     
     if args.file:
@@ -402,6 +475,12 @@ if __name__ == "__main__":
             print(f"  In-degree: {result.in_degree}, Out-degree: {result.out_degree}")
             if result.caller_roles:
                 print(f"  Caller roles: {result.caller_roles}")
+
+        # 谱分析信息 (v9.3)
+        if args.show_spectral and analyzer.spectral_analyzer:
+            print(f"\n[Spectral Layer]")
+            print(f"  Cluster: {result.spectral_cluster}")
+            print(f"  Fiedler: {result.fiedler_value:.4f}")
         
         # 融合角色
         print(f"\n[Fused Role]")
@@ -440,13 +519,48 @@ if __name__ == "__main__":
         for path in sorted(results.keys()):
             result = results[path]
             rel_path = os.path.relpath(path, args.project_root)[:50]
-            
+
             # 标记角色变化
             changed = "→" if result.ast_role != result.final_role else " "
-            
+
             print(f"{rel_path:<50} | "
                   f"{COLORS[result.ast_role]}{result.ast_role.value:<10}{RESET} | "
                   f"{result.graph_role.value:<12} | "
                   f"{changed}{COLORS[result.final_role]}{result.final_role.value:<10}{RESET} | "
                   f"{result.in_degree}/{result.out_degree}")
+
+    # PPR 上下文窗口 (v9.3)
+    if args.ppr_target and analyzer.spectral_ppr:
+        print(f"\n{'='*70}")
+        print(f"PPR Context Window for: {args.ppr_target}")
+        print(f"{'='*70}")
+
+        context = analyzer.spectral_ppr.run_ppr_with_cluster_boost(
+            args.ppr_target,
+            top_k=args.ppr_top_k,
+            cluster_boost=1.5
+        )
+
+        if not context:
+            print(f"  Module '{args.ppr_target}' not found in dependency graph")
+        else:
+            # 获取目标模块的聚类信息
+            target_cluster = analyzer._spectral_clusters.get(args.ppr_target, -1)
+            target_fiedler = analyzer._fiedler_values.get(args.ppr_target, 0.0)
+            print(f"  Target Cluster: {target_cluster}, Fiedler: {target_fiedler:.4f}")
+            print()
+
+            print(f"  {'Rank':<5} {'Module':<45} {'Score':<10} {'Cluster':<8}")
+            print("  " + "-" * 75)
+
+            for rank, (module, score) in enumerate(context, 1):
+                cluster = analyzer._spectral_clusters.get(module, -1)
+                same_cluster = "★" if cluster == target_cluster else " "
+                print(f"  {rank:<5} {module:<45} {score:.6f}   {same_cluster}C{cluster}")
+
+            print()
+            print(f"  ★ = Same cluster as target")
+
+    elif args.ppr_target and not analyzer.spectral_ppr:
+        print(f"\n[Warning] PPR not available. Install dependencies: pip install numpy scipy networkx")
 
