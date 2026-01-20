@@ -16,7 +16,7 @@ import math
 class RepositoryStats:
     """仓库统计信息"""
     module_count: int = 0
-    
+
     # 入度统计
     in_degree_min: int = 0
     in_degree_max: int = 0
@@ -24,9 +24,10 @@ class RepositoryStats:
     in_degree_median: float = 0.0
     in_degree_std: float = 0.0
     in_degree_p75: float = 0.0   # 75th percentile
+    in_degree_p80: float = 0.0   # 80th percentile (v9.3: 用于 HUB)
     in_degree_p90: float = 0.0   # 90th percentile
-    in_degree_p95: float = 0.0   # 95th percentile
-    
+    in_degree_p95: float = 0.0   # 95th percentile (v9.3: 用于 MEGA_HUB)
+
     # 出度统计
     out_degree_min: int = 0
     out_degree_max: int = 0
@@ -34,9 +35,22 @@ class RepositoryStats:
     out_degree_median: float = 0.0
     out_degree_std: float = 0.0
     out_degree_p75: float = 0.0
+    out_degree_p80: float = 0.0  # v9.3
     out_degree_p90: float = 0.0
     out_degree_p95: float = 0.0
-    
+
+    # v9.3: 零膨胀修正后的统计（仅非零值）
+    in_degree_nonzero_count: int = 0
+    in_degree_nonzero_mean: float = 0.0
+    in_degree_nonzero_p75: float = 0.0
+    out_degree_nonzero_count: int = 0
+    out_degree_nonzero_mean: float = 0.0
+    out_degree_nonzero_p75: float = 0.0
+
+    # v9.3: 图密度（边数 / 最大可能边数）
+    graph_density: float = 0.0
+    edge_count: int = 0
+
     # 仓库规模分类
     @property
     def size_category(self) -> str:
@@ -52,134 +66,196 @@ class RepositoryStats:
         else:
             return "huge"      # 超大型
 
+    @property
+    def density_category(self) -> str:
+        """v9.3: 图密度分类"""
+        if self.graph_density < 0.01:
+            return "very_sparse"   # 极稀疏
+        elif self.graph_density < 0.05:
+            return "sparse"        # 稀疏
+        elif self.graph_density < 0.15:
+            return "moderate"      # 中等
+        else:
+            return "dense"         # 稠密
+
+    @property
+    def zero_inflation_ratio(self) -> float:
+        """v9.3: 入度零膨胀比例（零值占比）"""
+        if self.module_count == 0:
+            return 0.0
+        return 1.0 - (self.in_degree_nonzero_count / self.module_count)
+
 
 @dataclass
 class DynamicThresholds:
     """
-    动态阈值配置
-    
+    动态阈值配置 (v9.3 增强版)
+
     所有阈值基于仓库统计分布动态计算，而非硬编码。
     设计原则：
     1. 使用百分位数而非绝对值
     2. 根据仓库规模调整敏感度
     3. 保证边界情况的合理性
+    4. v9.3: 分层 HUB + 零膨胀处理 + 图密度修正
     """
-    
+
     # === 图角色判定阈值 ===
-    
-    # HUB: 高入度模块
+
+    # v9.3: MEGA_HUB: 超级核心模块（P95，极少数）
+    mega_hub_in_degree_threshold: float = 0.0
+    mega_hub_in_degree_percentile: float = 95.0
+
+    # HUB: 高入度模块（v9.3: 调整为 P80）
     hub_in_degree_threshold: float = 0.0       # 入度 >= 此值判定为 HUB
-    hub_in_degree_percentile: float = 90.0     # 使用的百分位数
-    
-    # ORCHESTRATOR: 高出度模块  
+    hub_in_degree_percentile: float = 80.0     # v9.3: P90 -> P80
+
+    # ORCHESTRATOR: 高出度模块
     orchestrator_out_degree_threshold: float = 0.0
-    orchestrator_out_degree_percentile: float = 90.0
-    
+    orchestrator_out_degree_percentile: float = 80.0  # v9.3: P90 -> P80
+
     # 备选条件（当 max 值异常时使用）
-    hub_fallback_multiplier: float = 2.0       # mean * multiplier
+    hub_fallback_multiplier: float = 1.5       # v9.3: 2.0 -> 1.5
     hub_fallback_min: int = 3                  # 最小绝对值
-    orchestrator_fallback_multiplier: float = 2.0
+    orchestrator_fallback_multiplier: float = 1.5
     orchestrator_fallback_min: int = 3
-    
+
+    # v9.3: 图密度修正系数（稀疏图降低阈值）
+    density_correction_factor: float = 1.0     # 1.0 = 无修正，<1.0 = 降低阈值
+
     # === 架构层次推断阈值 ===
-    
+
     # 基础设施层: 高入度 + 低出度
     infra_in_degree_threshold: float = 0.0     # 入度 >= P75
     infra_out_degree_threshold: float = 0.0    # 出度 <= P25
-    
+
     # 应用层: 主要被 ADAPTER/TEST 调用
     app_layer_caller_ratio: float = 0.6        # 默认 60%（根据规模调整）
-    
+
     # 领域层: 高出度 + 调用 SCHEMA/UTIL
     domain_out_degree_threshold: float = 0.0   # 出度 >= P50
     domain_callee_ratio: float = 0.3           # 调用的 SCHEMA/UTIL 占比
-    
+
     # === BRIDGE 判定阈值 ===
     bridge_min_caller_roles: int = 2           # 调用者最少角色数
     bridge_min_callee_roles: int = 2           # 被调用者最少角色数
     bridge_jaccard_threshold: float = 0.5      # Jaccard 相似度阈值
-    
+
     # === 调整建议阈值 ===
     high_centrality_threshold: float = 0.0     # 高中心性阈值 (入度 >= P80)
     
     @classmethod
     def from_stats(cls, stats: RepositoryStats) -> 'DynamicThresholds':
         """
-        根据仓库统计信息计算动态阈值
-        
+        根据仓库统计信息计算动态阈值 (v9.3 增强版)
+
         核心思想：
         1. 使用百分位数而非绝对值，适应不同规模
         2. 根据仓库规模调整敏感度
         3. 设置合理的下限，避免小仓库判定失效
+        4. v9.3: 分层 HUB（MEGA_HUB P95 + HUB P80）
+        5. v9.3: 零膨胀处理（使用非零值百分位）
+        6. v9.3: 图密度修正（稀疏图降低阈值）
         """
         thresholds = cls()
-        
-        # 根据仓库规模调整百分位数
+
+        # === v9.3: 图密度修正系数 ===
+        # 稀疏图降低阈值，让更多节点被识别为 HUB
+        density = stats.density_category
+        if density == "very_sparse":
+            density_factor = 0.7   # 极稀疏：大幅降低阈值
+        elif density == "sparse":
+            density_factor = 0.85  # 稀疏：适度降低
+        elif density == "moderate":
+            density_factor = 1.0   # 中等：不修正
+        else:  # dense
+            density_factor = 1.1   # 稠密：略微提高
+        thresholds.density_correction_factor = density_factor
+
+        # === v9.3: 零膨胀处理 ===
+        # 如果零值占比过高（>50%），优先使用非零值统计
+        use_nonzero = stats.zero_inflation_ratio > 0.5
+
+        # 选择合适的入度百分位基准
+        if use_nonzero and stats.in_degree_nonzero_p75 > 0:
+            in_p75_base = stats.in_degree_nonzero_p75
+            in_mean_base = stats.in_degree_nonzero_mean
+        else:
+            in_p75_base = stats.in_degree_p75
+            in_mean_base = stats.in_degree_mean
+
+        if use_nonzero and stats.out_degree_nonzero_p75 > 0:
+            out_p75_base = stats.out_degree_nonzero_p75
+            out_mean_base = stats.out_degree_nonzero_mean
+        else:
+            out_p75_base = stats.out_degree_p75
+            out_mean_base = stats.out_degree_mean
+
+        # 根据仓库规模调整 app_ratio
         size = stats.size_category
         if size == "tiny":
-            # 微型仓库：降低阈值，否则可能没有 HUB
-            hub_percentile = 80.0
-            orch_percentile = 80.0
             app_ratio = 0.5
         elif size == "small":
-            hub_percentile = 85.0
-            orch_percentile = 85.0
             app_ratio = 0.55
         elif size == "medium":
-            hub_percentile = 90.0
-            orch_percentile = 90.0
             app_ratio = 0.6
         elif size == "large":
-            hub_percentile = 92.0
-            orch_percentile = 92.0
             app_ratio = 0.65
         else:  # huge
-            hub_percentile = 95.0
-            orch_percentile = 95.0
             app_ratio = 0.7
-        
-        # HUB 阈值
-        thresholds.hub_in_degree_percentile = hub_percentile
+
+        # === v9.3: 分层 HUB ===
+        # MEGA_HUB: P95，极少数超级核心
+        thresholds.mega_hub_in_degree_percentile = 95.0
+        thresholds.mega_hub_in_degree_threshold = max(
+            stats.in_degree_p95 * density_factor,
+            in_mean_base + 2 * stats.in_degree_std,  # mean + 2std
+            5  # MEGA_HUB 最小值较高
+        )
+
+        # HUB: P80（v9.3: 从 P90 降低到 P80，覆盖更多核心模块）
+        thresholds.hub_in_degree_percentile = 80.0
         thresholds.hub_in_degree_threshold = max(
-            stats.in_degree_p90 if hub_percentile >= 90 else stats.in_degree_p75,
-            stats.in_degree_mean + stats.in_degree_std,  # 至少高于 mean+1std
+            stats.in_degree_p80 * density_factor,
+            in_mean_base + stats.in_degree_std,  # mean + 1std
             2  # 最小值
         )
-        
-        # ORCHESTRATOR 阈值
-        thresholds.orchestrator_out_degree_percentile = orch_percentile
+
+        # ORCHESTRATOR: P80
+        thresholds.orchestrator_out_degree_percentile = 80.0
         thresholds.orchestrator_out_degree_threshold = max(
-            stats.out_degree_p90 if orch_percentile >= 90 else stats.out_degree_p75,
-            stats.out_degree_mean + stats.out_degree_std,
+            stats.out_degree_p80 * density_factor,
+            out_mean_base + stats.out_degree_std,
             2
         )
-        
-        # 备选条件的最小值
-        thresholds.hub_fallback_min = max(2, int(stats.in_degree_mean))
-        thresholds.orchestrator_fallback_min = max(2, int(stats.out_degree_mean))
-        
-        # 基础设施层阈值
-        thresholds.infra_in_degree_threshold = max(stats.in_degree_p75, 3)
+
+        # 备选条件的最小值（使用非零均值）
+        thresholds.hub_fallback_min = max(2, int(in_mean_base))
+        thresholds.orchestrator_fallback_min = max(2, int(out_mean_base))
+
+        # 基础设施层阈值（使用非零 P75）
+        thresholds.infra_in_degree_threshold = max(in_p75_base * density_factor, 3)
         thresholds.infra_out_degree_threshold = max(stats.out_degree_median, 1)
-        
+
         # 应用层比例
         thresholds.app_layer_caller_ratio = app_ratio
-        
+
         # 领域层阈值
         thresholds.domain_out_degree_threshold = max(stats.out_degree_median, 2)
-        
+
         # 高中心性阈值
         thresholds.high_centrality_threshold = max(
-            stats.in_degree_p75,
-            stats.in_degree_mean + stats.in_degree_std,
+            in_p75_base * density_factor,
+            in_mean_base + stats.in_degree_std,
             3
         )
-        
+
         return thresholds
     
     def __str__(self) -> str:
+        density_info = f" [density_factor={self.density_correction_factor:.2f}]" if self.density_correction_factor != 1.0 else ""
         return (
-            f"DynamicThresholds(\n"
+            f"DynamicThresholds({density_info}\n"
+            f"  MEGA_HUB: in_degree >= {self.mega_hub_in_degree_threshold:.1f} (P{self.mega_hub_in_degree_percentile})\n"
             f"  HUB: in_degree >= {self.hub_in_degree_threshold:.1f} (P{self.hub_in_degree_percentile})\n"
             f"  ORCHESTRATOR: out_degree >= {self.orchestrator_out_degree_threshold:.1f} (P{self.orchestrator_out_degree_percentile})\n"
             f"  INFRA: in >= {self.infra_in_degree_threshold:.1f}, out <= {self.infra_out_degree_threshold:.1f}\n"
@@ -189,52 +265,80 @@ class DynamicThresholds:
         )
 
 
-def compute_repository_stats(in_degrees: List[int], out_degrees: List[int]) -> RepositoryStats:
+def compute_repository_stats(in_degrees: List[int], out_degrees: List[int],
+                             edge_count: int = 0) -> RepositoryStats:
     """
-    计算仓库统计信息
-    
+    计算仓库统计信息 (v9.3 增强版)
+
     Args:
         in_degrees: 所有模块的入度列表
         out_degrees: 所有模块的出度列表
+        edge_count: 边的总数（用于计算图密度）
     """
     stats = RepositoryStats()
-    
+
     if not in_degrees or not out_degrees:
         return stats
-    
-    stats.module_count = len(in_degrees)
-    
-    # 入度统计
+
+    n = len(in_degrees)
+    stats.module_count = n
+
+    # === 入度统计 ===
     stats.in_degree_min = min(in_degrees)
     stats.in_degree_max = max(in_degrees)
     stats.in_degree_mean = statistics.mean(in_degrees)
     stats.in_degree_median = statistics.median(in_degrees)
-    stats.in_degree_std = statistics.stdev(in_degrees) if len(in_degrees) > 1 else 0
-    
+    stats.in_degree_std = statistics.stdev(in_degrees) if n > 1 else 0
+
     sorted_in = sorted(in_degrees)
-    n = len(sorted_in)
     stats.in_degree_p75 = sorted_in[int(n * 0.75)] if n > 0 else 0
+    stats.in_degree_p80 = sorted_in[int(n * 0.80)] if n > 0 else 0  # v9.3
     stats.in_degree_p90 = sorted_in[int(n * 0.90)] if n > 0 else 0
     stats.in_degree_p95 = sorted_in[int(n * 0.95)] if n > 0 else 0
-    
-    # 出度统计
+
+    # === 出度统计 ===
     stats.out_degree_min = min(out_degrees)
     stats.out_degree_max = max(out_degrees)
     stats.out_degree_mean = statistics.mean(out_degrees)
     stats.out_degree_median = statistics.median(out_degrees)
-    stats.out_degree_std = statistics.stdev(out_degrees) if len(out_degrees) > 1 else 0
-    
+    stats.out_degree_std = statistics.stdev(out_degrees) if n > 1 else 0
+
     sorted_out = sorted(out_degrees)
     stats.out_degree_p75 = sorted_out[int(n * 0.75)] if n > 0 else 0
+    stats.out_degree_p80 = sorted_out[int(n * 0.80)] if n > 0 else 0  # v9.3
     stats.out_degree_p90 = sorted_out[int(n * 0.90)] if n > 0 else 0
     stats.out_degree_p95 = sorted_out[int(n * 0.95)] if n > 0 else 0
-    
+
+    # === v9.3: 零膨胀修正统计（仅非零值） ===
+    nonzero_in = [d for d in in_degrees if d > 0]
+    if nonzero_in:
+        stats.in_degree_nonzero_count = len(nonzero_in)
+        stats.in_degree_nonzero_mean = statistics.mean(nonzero_in)
+        sorted_nonzero_in = sorted(nonzero_in)
+        nz_n = len(sorted_nonzero_in)
+        stats.in_degree_nonzero_p75 = sorted_nonzero_in[int(nz_n * 0.75)] if nz_n > 0 else 0
+
+    nonzero_out = [d for d in out_degrees if d > 0]
+    if nonzero_out:
+        stats.out_degree_nonzero_count = len(nonzero_out)
+        stats.out_degree_nonzero_mean = statistics.mean(nonzero_out)
+        sorted_nonzero_out = sorted(nonzero_out)
+        nz_n = len(sorted_nonzero_out)
+        stats.out_degree_nonzero_p75 = sorted_nonzero_out[int(nz_n * 0.75)] if nz_n > 0 else 0
+
+    # === v9.3: 图密度计算 ===
+    # 有向图最大边数 = n * (n - 1)
+    stats.edge_count = edge_count if edge_count > 0 else sum(out_degrees)
+    max_edges = n * (n - 1) if n > 1 else 1
+    stats.graph_density = stats.edge_count / max_edges if max_edges > 0 else 0
+
     return stats
 
 
 class GraphRole(Enum):
     """图结构角色"""
-    HUB = "HUB"                     # 被广泛依赖的核心模块
+    MEGA_HUB = "MEGA_HUB"           # v9.3: 超级核心模块（P95，极少数）
+    HUB = "HUB"                     # 被广泛依赖的核心模块（P80）
     ORCHESTRATOR = "ORCHESTRATOR"   # 协调/聚合多个模块
     BRIDGE = "BRIDGE"               # 连接不同角色层的桥梁
     LEAF = "LEAF"                   # 叶子节点（只被调用）
@@ -459,14 +563,20 @@ class DependencyGraphAnalyzer:
         self._thresholds = DynamicThresholds.from_stats(self._stats)
         
         if self.debug:
+            s = self._stats
             print(f"\n[DynamicThresholds] Repository stats:")
-            print(f"  Modules: {self._stats.module_count} ({self._stats.size_category})")
-            print(f"  In-degree: min={self._stats.in_degree_min}, max={self._stats.in_degree_max}, "
-                  f"mean={self._stats.in_degree_mean:.1f}, median={self._stats.in_degree_median:.1f}, "
-                  f"P90={self._stats.in_degree_p90:.1f}")
-            print(f"  Out-degree: min={self._stats.out_degree_min}, max={self._stats.out_degree_max}, "
-                  f"mean={self._stats.out_degree_mean:.1f}, median={self._stats.out_degree_median:.1f}, "
-                  f"P90={self._stats.out_degree_p90:.1f}")
+            print(f"  Modules: {s.module_count} ({s.size_category})")
+            print(f"  Density: {s.graph_density:.4f} ({s.density_category}), edges={s.edge_count}")
+            print(f"  Zero-inflation: {s.zero_inflation_ratio:.1%} (in-degree zeros)")
+            print(f"  In-degree:  min={s.in_degree_min}, max={s.in_degree_max}, "
+                  f"mean={s.in_degree_mean:.1f}, median={s.in_degree_median:.1f}, "
+                  f"P80={s.in_degree_p80:.1f}, P95={s.in_degree_p95:.1f}")
+            if s.in_degree_nonzero_count > 0:
+                print(f"    (nonzero: n={s.in_degree_nonzero_count}, mean={s.in_degree_nonzero_mean:.1f}, "
+                      f"P75={s.in_degree_nonzero_p75:.1f})")
+            print(f"  Out-degree: min={s.out_degree_min}, max={s.out_degree_max}, "
+                  f"mean={s.out_degree_mean:.1f}, median={s.out_degree_median:.1f}, "
+                  f"P80={s.out_degree_p80:.1f}, P95={s.out_degree_p95:.1f}")
             print(f"\n{self._thresholds}")
     
     def extract_features(self, module_name: str) -> Optional[GraphFeatures]:
@@ -557,23 +667,30 @@ class DependencyGraphAnalyzer:
         t = self._thresholds
         s = self._stats
         
-        # === 图结构角色判定（使用动态阈值） ===
-        
-        # 1. HUB: 高入度，被广泛依赖
+        # === 图结构角色判定（v9.3: 分层 HUB + 动态阈值） ===
+
+        # 1. MEGA_HUB: 超级核心模块（P95，极少数）
+        if in_deg >= t.mega_hub_in_degree_threshold:
+            result.graph_role = GraphRole.MEGA_HUB
+            result.graph_role_confidence = min(in_deg / (s.in_degree_max or 1), 1.0)
+            result.graph_role_reasoning = (
+                f"Super core module ({in_deg} >= P95 threshold {t.mega_hub_in_degree_threshold:.1f}), "
+                f"extremely widely depended upon"
+            )
+
+        # 2. HUB: 高入度，被广泛依赖（P80）
         # 条件：入度 >= 动态阈值 或 入度 > mean + std 且 >= 最小值
-        hub_threshold = t.hub_in_degree_threshold
-        hub_fallback = s.in_degree_mean + t.hub_fallback_multiplier * s.in_degree_std
-        hub_min = t.hub_fallback_min
-        
-        if in_deg >= hub_threshold or (in_deg >= hub_fallback and in_deg >= hub_min):
+        elif in_deg >= t.hub_in_degree_threshold or \
+             (in_deg >= s.in_degree_mean + t.hub_fallback_multiplier * s.in_degree_std and \
+              in_deg >= t.hub_fallback_min):
             result.graph_role = GraphRole.HUB
             result.graph_role_confidence = min(in_deg / (s.in_degree_max or 1), 1.0)
             result.graph_role_reasoning = (
-                f"High in-degree ({in_deg} >= threshold {hub_threshold:.1f}), "
+                f"High in-degree ({in_deg} >= P80 threshold {t.hub_in_degree_threshold:.1f}), "
                 f"widely depended upon"
             )
-        
-        # 2. ORCHESTRATOR: 高出度，聚合/协调多个模块
+
+        # 3. ORCHESTRATOR: 高出度，聚合/协调多个模块
         elif out_deg >= t.orchestrator_out_degree_threshold or \
              (out_deg >= s.out_degree_mean + t.orchestrator_fallback_multiplier * s.out_degree_std and \
               out_deg >= t.orchestrator_fallback_min):
@@ -584,31 +701,31 @@ class DependencyGraphAnalyzer:
                 f"coordinates multiple modules"
             )
         
-        # 3. LEAF: 只被调用，不调用内部模块（确定性判断，无需动态阈值）
+        # 4. LEAF: 只被调用，不调用内部模块（确定性判断，无需动态阈值）
         elif in_deg > 0 and out_deg == 0:
             result.graph_role = GraphRole.LEAF
             result.graph_role_confidence = 0.9
             result.graph_role_reasoning = f"Leaf node (in={in_deg}, out=0)"
-        
-        # 4. SINK: 只调用，不被调用（确定性判断）
+
+        # 5. SINK: 只调用，不被调用（确定性判断）
         elif in_deg == 0 and out_deg > 0:
             result.graph_role = GraphRole.SINK
             result.graph_role_confidence = 0.9
             result.graph_role_reasoning = f"Sink node (in=0, out={out_deg})"
-        
-        # 5. BRIDGE: 连接不同角色层的桥梁
+
+        # 6. BRIDGE: 连接不同角色层的桥梁
         elif self._is_bridge(features, t):
             result.graph_role = GraphRole.BRIDGE
             result.graph_role_confidence = 0.7
             result.graph_role_reasoning = "Connects different role layers"
-        
-        # 6. ISOLATE: 孤立节点（确定性判断）
+
+        # 7. ISOLATE: 孤立节点（确定性判断）
         elif in_deg == 0 and out_deg == 0:
             result.graph_role = GraphRole.ISOLATE
             result.graph_role_confidence = 1.0
             result.graph_role_reasoning = "Isolated node"
-        
-        # 7. NORMAL: 普通节点
+
+        # 8. NORMAL: 普通节点
         else:
             result.graph_role = GraphRole.NORMAL
             result.graph_role_confidence = 0.5

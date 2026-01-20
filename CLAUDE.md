@@ -38,7 +38,7 @@ Layer 2: Symbol Table Layer
 Layer 3: Graph Layer
 ├─ What: Dependency network analysis
 ├─ How: Static import scanning + graph topology + dynamic thresholds
-├─ GraphRoles: HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE
+├─ GraphRoles: MEGA_HUB, HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE
 └─ Answers: "WHERE is this file in the architecture?"
 
 Layer 4: Spectral Layer (NEW in v9.3)
@@ -87,7 +87,7 @@ Fusion: Weighted Role Fusion
 
 ### Enums
 - `Role` - 9 architectural roles
-- `GraphRole` - 6 graph topology roles (HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE)
+- `GraphRole` - 7 graph topology roles (MEGA_HUB, HUB, ORCHESTRATOR, BRIDGE, LEAF, SINK, ISOLATE)
 - `ArchitecturalLayer` - 3 layers (APPLICATION, INTERFACE, INFRASTRUCTURE)
 
 ## Usage
@@ -252,6 +252,9 @@ pip install pyvis matplotlib
 - **Fiedler vector**: Module partitioning based on graph cuts
 - **Spectral-weighted edges**: PPR prefers same-cluster propagation
 - **Node filtering**: `get_filtered_nodes()` for visualization
+- **Tiered HUB**: MEGA_HUB (P95) + HUB (P80) for better granularity
+- **Zero-inflation handling**: Uses non-zero percentiles when >50% nodes have degree=0
+- **Graph density correction**: Sparse graphs get lower thresholds (factor 0.7-0.85)
 
 ### v9.2
 - `RoleSource` enum for tracking role assignment origins
@@ -319,17 +322,53 @@ spectral_similarity(A, B) = exp(-||v(A) - v(B)||² / (2σ²))
 4. **Fallback: LOGIC**
    - Default for files with complex logic that don't match other patterns
 
-## Dynamic Thresholds
+## Dynamic Thresholds (v9.3 Enhanced)
 
-RAACS adapts to repository size using statistical distribution:
+RAACS adapts to repository characteristics using three mechanisms:
 
-| Repo Size | Modules | HUB Percentile | ORCH Percentile | APP Layer Ratio |
-|-----------|---------|----------------|-----------------|-----------------|
-| tiny      | <30     | P80            | P80             | 0.50            |
-| small     | 30-100  | P85            | P85             | 0.55            |
-| medium    | 100-300 | P90            | P90             | 0.60            |
-| large     | 300-1000| P92            | P92             | 0.65            |
-| huge      | >1000   | P95            | P95             | 0.70            |
+### 1. Tiered HUB Classification
+| Role | Percentile | Description |
+|------|------------|-------------|
+| MEGA_HUB | P95 | Super core modules (極少數) |
+| HUB | P80 | Core modules (被廣泛依賴) |
+
+### 2. Repository Size Adaptation
+| Repo Size | Modules | APP Layer Ratio |
+|-----------|---------|-----------------|
+| tiny      | <30     | 0.50            |
+| small     | 30-100  | 0.55            |
+| medium    | 100-300 | 0.60            |
+| large     | 300-1000| 0.65            |
+| huge      | >1000   | 0.70            |
+
+### 3. Graph Density Correction
+| Density Category | Range | Factor | Effect |
+|------------------|-------|--------|--------|
+| very_sparse | <1% | 0.70 | Thresholds reduced 30% |
+| sparse | 1-5% | 0.85 | Thresholds reduced 15% |
+| moderate | 5-15% | 1.00 | No change |
+| dense | >15% | 1.10 | Thresholds increased 10% |
+
+### 4. Zero-Inflation Handling
+When >50% of nodes have in-degree = 0:
+- Uses non-zero percentiles (P75 of non-zero values)
+- Prevents threshold collapse to 0
+
+**Example output**:
+```
+[DynamicThresholds] Repository stats:
+  Modules: 115 (medium)
+  Density: 0.0187 (sparse), edges=245
+  Zero-inflation: 52.2% (in-degree zeros)
+  In-degree:  min=0, max=23, P80=2.0, P95=7.0
+    (nonzero: n=55, mean=3.7, P75=5.0)
+
+DynamicThresholds( [density_factor=0.85]
+  MEGA_HUB: in_degree >= 10.4 (P95.0)
+  HUB: in_degree >= 7.0 (P80.0)
+  ORCHESTRATOR: out_degree >= 5.8 (P80.0)
+)
+```
 
 ## Fusion Rules
 

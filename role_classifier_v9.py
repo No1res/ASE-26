@@ -82,24 +82,30 @@ class IntegratedRoleAnalyzer:
     # 角色融合规则
     # (AST角色, 图角色) -> (融合角色, 置信度调整, 说明)
     FUSION_RULES = {
-        # HUB 节点：被广泛依赖
+        # v9.3: MEGA_HUB 节点：超级核心模块（极少数，P95）
+        (Role.LOGIC, GraphRole.MEGA_HUB): (Role.UTIL, 0.9, "Super core utility (MEGA_HUB)"),
+        (Role.UTIL, GraphRole.MEGA_HUB): (Role.UTIL, 1.0, "Confirmed super core utility"),
+        (Role.SCHEMA, GraphRole.MEGA_HUB): (Role.SCHEMA, 1.0, "Core schema/entity (MEGA_HUB)"),
+        (Role.UNKNOWN, GraphRole.MEGA_HUB): (Role.UTIL, 0.8, "MEGA_HUB with unknown AST"),
+
+        # HUB 节点：被广泛依赖（P80）
         (Role.LOGIC, GraphRole.HUB): (Role.UTIL, 0.7, "High centrality suggests core utility"),
         (Role.UNKNOWN, GraphRole.HUB): (Role.UTIL, 0.6, "Hub with unknown AST"),
-        
+
         # ORCHESTRATOR 节点：协调多个模块
         (Role.LOGIC, GraphRole.ORCHESTRATOR): (Role.LOGIC, 1.0, "Orchestrator confirms business logic"),
         (Role.UTIL, GraphRole.ORCHESTRATOR): (Role.LOGIC, 0.8, "Orchestrator suggests coordination logic"),
         (Role.SCHEMA, GraphRole.ORCHESTRATOR): (Role.SCHEMA, 0.9, "Schema with many deps (aggregation)"),
-        
+
         # SINK 节点：只调用，不被调用（入口点）
         (Role.LOGIC, GraphRole.SINK): (Role.SCRIPT, 0.5, "Sink node (entry point)"),
         (Role.ADAPTER, GraphRole.SINK): (Role.ADAPTER, 1.0, "Entry adapter"),
-        
+
         # LEAF 节点：只被调用，不调用其他
         (Role.LOGIC, GraphRole.LEAF): (Role.UTIL, 0.6, "Leaf node (stateless utility)"),
         (Role.SCHEMA, GraphRole.LEAF): (Role.SCHEMA, 1.0, "Pure schema/entity"),
         (Role.CONFIG, GraphRole.LEAF): (Role.CONFIG, 1.0, "Pure config"),
-        
+
         # BRIDGE 节点：连接不同层
         (Role.LOGIC, GraphRole.BRIDGE): (Role.ADAPTER, 0.6, "Bridge suggests adapter layer"),
     }
